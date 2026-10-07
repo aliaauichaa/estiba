@@ -4,27 +4,54 @@ import { Simulation, SHIFT_START, SHIFT_END, fmt, runDay } from './sim/engine.js
 import { WarehouseScene, MODES } from './scene/warehouse3d.js';
 import { computeHistory, baselineAt } from './analysis/history.js';
 import { analyzeSlotting } from './analysis/optimize.js';
-import { answerLocal, diagnose, SUGERENCIAS, pct, num } from './analysis/assistant.js';
+import { answerLocal, diagnose, sugerencias } from './analysis/assistant.js';
 import { API_URL, answerRemote } from './analysis/remote.js';
-import { ShiftChart, CHART_LEGEND } from './ui/chart.js';
+import { ShiftChart, chartLegend } from './ui/chart.js';
+import { tx, lang, setLang, onLang, pct, num, ppUnit } from './i18n.js';
 import { renderOverview, renderSelection, renderRoutes, renderOpt, riskCount } from './ui/panels.js';
 import { md, esc } from './ui/md.js';
 
 const START_AT = 10 * 60 + 30; // la demo arranca a media mañana, con la operativa ya en marcha
 const SPEEDS = [{ v: 1, l: '1×' }, { v: 4, l: '4×' }, { v: 12, l: '12×' }, { v: 30, l: '30×' }];
 const TABS = [
-  { id: 'detalle', nombre: 'Operativa' },
-  { id: 'rutas', nombre: 'Expediciones' },
-  { id: 'opt', nombre: 'Optimización' },
+  { id: 'detalle', nombre: () => tx('Operativa', 'Operations') },
+  { id: 'rutas', nombre: () => tx('Expediciones', 'Dispatch') },
+  { id: 'opt', nombre: () => tx('Optimización', 'Optimisation') },
 ];
 const KPIS = [
-  { id: 'otif', label: 'OTIF', tip: 'Pedidos que salen a tiempo y completos', f: (v) => pct(v), up: true, unit: 'pp' },
-  { id: 'fill', label: 'Fill rate', tip: 'Líneas servidas completas', f: (v) => pct(v), up: true, unit: 'pp' },
-  { id: 'dts', label: 'Dock-to-stock', tip: 'Minutos desde que el camión atraca hasta que el palé está ubicado', f: (v) => (v == null ? '—' : `${num(v)}<small>min</small>`), up: false, unit: 'min' },
-  { id: 'utilizacion', label: 'Uso de equipos', tip: 'Tiempo trabajando sobre tiempo disponible de las carretillas', f: (v) => pct(v, 0), up: false, unit: 'pp' },
-  { id: 'productividad', label: 'Líneas/h·equipo', tip: 'Líneas preparadas por hora y carretilla disponible', f: (v) => num(v), up: true, unit: '' },
-  { id: 'ocupacion', label: 'Ocupación', tip: 'Huecos de estantería ocupados o asignados', f: (v) => pct(v, 0), up: false, unit: 'pp' },
-  { id: 'calle', label: 'Palés en calles', tip: 'Palés descargados esperando a ser ubicados', f: (v) => num(v), up: false, unit: '', baseKey: 'calle' },
+  { id: 'otif', label: () => 'OTIF', tip: () => tx('Pedidos que salen a tiempo y completos', 'Orders shipped on time and in full'), f: (v) => pct(v), up: true, unit: 'pp' },
+  { id: 'fill', label: () => 'Fill rate', tip: () => tx('Líneas servidas completas', 'Lines shipped in full'), f: (v) => pct(v), up: true, unit: 'pp' },
+  { id: 'dts', label: () => 'Dock-to-stock', tip: () => tx('Minutos desde que el camión atraca hasta que el palé está ubicado', 'Minutes from the truck docking to the pallet being put away'), f: (v) => (v == null ? '—' : `${num(v)}<small>min</small>`), up: false, unit: 'min' },
+  { id: 'utilizacion', label: () => tx('Uso de equipos', 'Equipment use'), tip: () => tx('Tiempo trabajando sobre tiempo disponible de las carretillas', 'Forklift working time over available time'), f: (v) => pct(v, 0), up: false, unit: 'pp' },
+  { id: 'productividad', label: () => tx('Líneas/h·equipo', 'Lines/h per truck'), tip: () => tx('Líneas preparadas por hora y carretilla disponible', 'Lines picked per hour per available forklift'), f: (v) => num(v), up: true, unit: '' },
+  { id: 'ocupacion', label: () => tx('Ocupación', 'Occupancy'), tip: () => tx('Huecos de estantería ocupados o asignados', 'Rack locations occupied or assigned'), f: (v) => pct(v, 0), up: false, unit: 'pp' },
+  { id: 'calle', label: () => tx('Palés en calles', 'Pallets in lanes'), tip: () => tx('Palés descargados esperando a ser ubicados', 'Unloaded pallets waiting for put-away'), f: (v) => num(v), up: false, unit: '', baseKey: 'calle' },
+];
+
+// Textos fijos de index.html: [selector, propiedad, es, en].
+const STATIC = [
+  ['.brand-text small', 'textContent', 'Gemelo digital de almacén', 'Warehouse digital twin'],
+  ['#reset', 'textContent', 'Reiniciar', 'Restart'],
+  ['#reset', 'title', 'Volver a empezar el día', 'Start the day again'],
+  ['#speed', 'aria-label', 'Velocidad', 'Speed'],
+  ['#sites', 'aria-label', 'Almacenes', 'Warehouses'],
+  ['#modes', 'aria-label', 'Vista de la nave', 'Warehouse view'],
+  ['.hint', 'textContent', 'Arrastra para mover · rueda para acercar · clic en una carretilla, un camión o un hueco', 'Drag to pan · scroll to zoom · click a forklift, a truck or a location'],
+  ['#loading', 'textContent', 'Montando la nave…', 'Building the warehouse…'],
+  ['.chart-card h3', 'textContent', 'Ritmo del turno', 'Shift pace'],
+  ['.feed-card h3', 'textContent', 'Lo que está pasando', 'What is happening'],
+  ['.foot span:first-child', 'textContent', 'Datos simulados: almacenes, pedidos y transportistas son ficticios.', 'Simulated data: warehouses, orders and carriers are fictitious.'],
+  ['.foot span:last-child', 'innerHTML', 'Proyecto de <a href="https://www.linkedin.com/in/ali-aauicha/" target="_blank" rel="noopener">Ali Aauicha</a> · Three.js + simulación propia', 'A project by <a href="https://www.linkedin.com/in/ali-aauicha/" target="_blank" rel="noopener">Ali Aauicha</a> · Three.js + custom simulation'],
+  ['#ai-teaser b', 'textContent', 'Pregunta a la IA', 'Ask the AI'],
+  ['#ai-teaser span', 'textContent', '«¿Por qué baja el OTIF hoy?»', '"Why is OTIF dropping today?"'],
+  ['#ai-teaser .teaser-x', 'aria-label', 'Cerrar aviso', 'Close'],
+  ['#ai-fab', 'aria-label', 'Abrir el asistente de operaciones con IA', 'Open the AI operations assistant'],
+  ['#ai-panel', 'aria-label', 'Asistente de operaciones', 'Operations assistant'],
+  ['.ai-top-info b', 'textContent', 'Asistente de operaciones', 'Operations assistant'],
+  ['#ai-close', 'aria-label', 'Cerrar el asistente', 'Close the assistant'],
+  ['#ai-input', 'placeholder', 'Pregunta sobre el turno…', 'Ask about the shift…'],
+  ['#ai-input', 'aria-label', 'Tu pregunta', 'Your question'],
+  ['#ai-send', 'aria-label', 'Enviar', 'Send'],
 ];
 
 const $ = (s) => document.querySelector(s);
@@ -56,7 +83,7 @@ function buildChrome() {
     const b = e.target.closest('[data-site]');
     if (b) loadSite(b.dataset.site);
   });
-  $('#speed').innerHTML = SPEEDS.map((s) => `<button data-speed="${s.v}" title="${s.v} min de turno por segundo">${s.l}</button>`).join('');
+  $('#speed').innerHTML = SPEEDS.map((s) => `<button data-speed="${s.v}">${s.l}</button>`).join('');
   $('#speed').addEventListener('click', (e) => {
     const b = e.target.closest('[data-speed]');
     if (!b) return;
@@ -65,26 +92,78 @@ function buildChrome() {
   });
   $('#play').addEventListener('click', () => setPlaying(!state.playing));
   $('#reset').addEventListener('click', () => resetDay(SHIFT_START));
-  $('#modes').innerHTML = MODES.map((m) => `<button data-mode="${m.id}">${m.nombre}</button>`).join('');
+  $('#modes').innerHTML = MODES.map((m) => `<button data-mode="${m.id}"></button>`).join('');
   $('#modes').addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]');
     if (b) setMode(b.dataset.mode);
   });
-  $('#tabs').innerHTML = TABS.map((t) => `<button class="tab" role="tab" data-tab="${t.id}">${t.nombre}<span class="badge" id="badge-${t.id}" hidden></span></button>`).join('');
+  $('#tabs').innerHTML = TABS.map((t) => `<button class="tab" role="tab" data-tab="${t.id}"><span class="tab-name"></span><span class="badge" id="badge-${t.id}" hidden></span></button>`).join('');
   $('#tabs').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
     if (b) setTab(b.dataset.tab);
   });
   $('#tab-body').addEventListener('click', onPanelClick);
-  $('#kpis').innerHTML = KPIS.map((k) => `<div class="kpi" id="kpi-${k.id}"><div class="k-label"><abbr title="${esc(k.tip)}">${k.label}</abbr></div><div class="k-value">—</div><div class="k-delta flat">&nbsp;</div><svg class="spark" viewBox="0 0 64 22" preserveAspectRatio="none"></svg></div>`).join('');
-  $('#chart-legend').innerHTML = CHART_LEGEND.map((l) => `<span><i style="background:${l.color}"></i>${l.label}</span>`).join('');
+  $('#kpis').innerHTML = KPIS.map((k) => `<div class="kpi" id="kpi-${k.id}"><div class="k-label"><abbr></abbr></div><div class="k-value">—</div><div class="k-delta flat">&nbsp;</div><svg class="spark" viewBox="0 0 64 22" preserveAspectRatio="none"></svg></div>`).join('');
+  $('#lang').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-lang]');
+    if (b) setLang(b.dataset.lang);
+  });
   document.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea')) return;
     if (e.code === 'Space') { e.preventDefault(); setPlaying(!state.playing); }
     if (e.key === 'Escape') select(null);
   });
   paintSpeed();
+  paintLabels();
 }
+
+// Todo lo que depende del idioma y no se repinta solo en cada refresco.
+function paintLabels() {
+  document.documentElement.lang = lang;
+  document.title = tx('Estiba · Gemelo digital de almacén', 'Estiba · Warehouse digital twin');
+  for (const [sel, prop, es, en] of STATIC) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    if (prop === 'textContent' || prop === 'innerHTML') el[prop] = tx(es, en);
+    else el.setAttribute(prop, tx(es, en));
+  }
+  for (const b of document.querySelectorAll('#speed button')) b.title = tx(`${b.dataset.speed} min de turno por segundo`, `${b.dataset.speed} shift minutes per second`);
+  for (const b of document.querySelectorAll('#modes button')) b.textContent = MODES.find((m) => m.id === b.dataset.mode).nombre;
+  for (const b of document.querySelectorAll('#tabs .tab')) b.querySelector('.tab-name').textContent = TABS.find((t) => t.id === b.dataset.tab).nombre();
+  for (const def of KPIS) {
+    const ab = document.querySelector(`#kpi-${def.id} abbr`);
+    ab.textContent = def.label();
+    ab.title = def.tip();
+  }
+  $('#chart-legend').innerHTML = chartLegend().map((l) => `<span><i style="background:${l.color}"></i>${l.label}</span>`).join('');
+  $('#ai-quick').innerHTML = sugerencias().map((q) => `<button type="button" class="chip" data-ask="${esc(q)}">${esc(q)}</button>`).join('');
+  for (const b of document.querySelectorAll('#lang [data-lang]')) {
+    b.classList.toggle('on', b.dataset.lang === lang);
+    b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
+  }
+  setPlaying(state.playing);
+}
+
+onLang(() => {
+  // Si se entró con ?lang=, la URL se actualiza para que al recargar o compartir salga el idioma elegido.
+  try {
+    const u = new URL(window.location.href);
+    if (u.searchParams.has('lang')) { u.searchParams.set('lang', lang); window.history.replaceState(null, '', u); }
+  } catch { /* sin history */ }
+  paintLabels();
+  setMode(state.mode);
+  scene.relabel();
+  state.network = null;
+  panelSig = '';
+  state.lastEvents = -1;
+  if (state.sim) {
+    refreshAll();
+    renderPanel(true);
+    lastNetwork = -1;
+    paintSiteDots();
+  }
+  if (state.chatOpen) renderChat();
+});
 
 function paintSpeed() {
   for (const b of document.querySelectorAll('#speed button')) b.classList.toggle('on', Number(b.dataset.speed) === state.speed);
@@ -93,7 +172,7 @@ function paintSpeed() {
 function setPlaying(v) {
   state.playing = v && !state.sim?.terminado;
   $('#play').classList.toggle('paused', !state.playing);
-  $('#play').setAttribute('aria-label', state.playing ? 'Pausar' : 'Reanudar');
+  $('#play').setAttribute('aria-label', state.playing ? tx('Pausar', 'Pause') : tx('Reanudar', 'Resume'));
 }
 
 function setMode(mode) {
@@ -101,10 +180,22 @@ function setMode(mode) {
   scene.setMode(mode);
   for (const b of document.querySelectorAll('#modes button')) b.classList.toggle('on', b.dataset.mode === mode);
   const legends = {
-    operativa: '<span><i style="background:#c9a36b"></i>Palé en estantería</span><span><i style="background:#ff6b5e"></i>Palé sin hueco</span><span><i style="background:#cfe7e3"></i>Pedido preparado</span><span><i style="background:#2ec4b6;border-radius:50%"></i>Carretilla preparando</span><span><i style="background:#6c9cf0;border-radius:50%"></i>Ubicando</span>',
-    ocupacion: '<span><i style="background:#2ec4b6"></i>Hueco de picking con stock</span><span><i style="background:#f5a524"></i>Menos del 30 %</span><span><i style="background:#ff6b5e"></i>Picking vacío</span><span><i style="background:#3f7d79"></i>Reserva</span><span class="muted">La altura del palé indica las cajas que quedan</span>',
-    abc: '<span><i style="background:#2ec4b6"></i>A · 80 % de las líneas</span><span><i style="background:#f5a524"></i>B · 15 %</span><span><i style="background:#56627a"></i>C · 5 %</span><span><i style="background:#343c49"></i>Reserva</span>',
-    calor: '<span>Visitas de picking hoy</span><span><span class="ramp" style="background:linear-gradient(90deg,#1f2a38,#3f6fc4,#f5a524,#ff6b5e)"></span></span>',
+    operativa: tx(
+      '<span><i style="background:#c9a36b"></i>Palé en estantería</span><span><i style="background:#ff6b5e"></i>Palé sin hueco</span><span><i style="background:#cfe7e3"></i>Pedido preparado</span><span><i style="background:#2ec4b6;border-radius:50%"></i>Carretilla preparando</span><span><i style="background:#6c9cf0;border-radius:50%"></i>Ubicando</span>',
+      '<span><i style="background:#c9a36b"></i>Pallet in rack</span><span><i style="background:#ff6b5e"></i>Pallet with no location</span><span><i style="background:#cfe7e3"></i>Order ready</span><span><i style="background:#2ec4b6;border-radius:50%"></i>Forklift picking</span><span><i style="background:#6c9cf0;border-radius:50%"></i>Putting away</span>',
+    ),
+    ocupacion: tx(
+      '<span><i style="background:#2ec4b6"></i>Hueco de picking con stock</span><span><i style="background:#f5a524"></i>Menos del 30 %</span><span><i style="background:#ff6b5e"></i>Picking vacío</span><span><i style="background:#3f7d79"></i>Reserva</span><span class="muted">La altura del palé indica las cajas que quedan</span>',
+      '<span><i style="background:#2ec4b6"></i>Pick face with stock</span><span><i style="background:#f5a524"></i>Under 30%</span><span><i style="background:#ff6b5e"></i>Empty pick face</span><span><i style="background:#3f7d79"></i>Reserve</span><span class="muted">Pallet height shows the cases left</span>',
+    ),
+    abc: tx(
+      '<span><i style="background:#2ec4b6"></i>A · 80 % de las líneas</span><span><i style="background:#f5a524"></i>B · 15 %</span><span><i style="background:#56627a"></i>C · 5 %</span><span><i style="background:#343c49"></i>Reserva</span>',
+      '<span><i style="background:#2ec4b6"></i>A · 80% of lines</span><span><i style="background:#f5a524"></i>B · 15%</span><span><i style="background:#56627a"></i>C · 5%</span><span><i style="background:#343c49"></i>Reserve</span>',
+    ),
+    calor: tx(
+      '<span>Visitas de picking hoy</span><span><span class="ramp" style="background:linear-gradient(90deg,#1f2a38,#3f6fc4,#f5a524,#ff6b5e)"></span></span>',
+      '<span>Picking visits today</span><span><span class="ramp" style="background:linear-gradient(90deg,#1f2a38,#3f6fc4,#f5a524,#ff6b5e)"></span></span>',
+    ),
   };
   $('#legend').innerHTML = legends[mode];
 }
@@ -187,7 +278,7 @@ function paintSiteDots() {
     const o = r.k.otif;
     const cls = r.top && r.top.peso >= 3 ? 'bad' : r.top ? 'warn' : 'ok';
     el.className = `dot ${o == null ? (r.top ? 'warn' : 'ok') : cls}`;
-    el.title = r.top ? r.top.titulo : 'Sin incidencias';
+    el.title = r.top ? r.top.titulo : tx('Sin incidencias', 'No issues');
   }
 }
 
@@ -236,7 +327,7 @@ function computeDayCompare() {
   state.dayCompare = { site: state.site.id, actual: a, abc: b };
 }
 
-let panelSig = '';
+var panelSig = ''; // var: onLang() la reinicia y se registra antes de esta línea
 function renderPanel(force = false) {
   const body = $('#tab-body');
   const sim = state.sim;
@@ -261,7 +352,7 @@ function renderPanel(force = false) {
 
 function chatLog() {
   if (!state.chats.has(state.site.id)) {
-    state.chats.set(state.site.id, [{ who: 'bot', text: `Hola. Tengo delante el turno de **${state.site.nombre}** en tiempo real y los 14 días anteriores para comparar. Pregúntame lo que necesites.` }]);
+    state.chats.set(state.site.id, [{ who: 'bot', welcome: true }]);
   }
   return state.chats.get(state.site.id);
 }
@@ -269,9 +360,13 @@ function chatLog() {
 // El asistente vive en una burbuja flotante (como en Mi Campo y Quillaflow), siempre a mano.
 function renderChat() {
   const log = chatLog();
-  $('#ai-sub').textContent = `${state.site.nombre} · ${API_URL ? 'Claude en Amazon Bedrock' : 'datos del turno en directo'}`;
+  $('#ai-sub').textContent = `${state.site.nombre} · ${API_URL ? tx('Claude en Amazon Bedrock', 'Claude on Amazon Bedrock') : tx('datos del turno en directo', 'live shift data')}`;
   const box = $('#ai-msgs');
-  box.innerHTML = log.map((m) => `<div class="msg ${m.who}">${m.who === 'bot' ? md(m.text) : esc(m.text)}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`).join('')
+  const welcome = () => tx(
+    `Hola. Tengo delante el turno de **${state.site.nombre}** en tiempo real y los 14 días anteriores para comparar. Pregúntame lo que necesites.`,
+    `Hi. I am looking at the **${state.site.nombre}** shift in real time, with the previous 14 days to compare against. Ask me anything.`,
+  );
+  box.innerHTML = log.map((m) => `<div class="msg ${m.who}">${m.who === 'bot' ? md(m.welcome ? welcome() : m.text) : esc(m.text)}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`).join('')
     + (log.pending ? '<div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div>' : '');
   box.scrollTop = box.scrollHeight;
   $('#ai-send').disabled = !!log.pending;
@@ -323,7 +418,6 @@ function buildChat() {
     window.visualViewport.addEventListener('scroll', fitChatToViewport);
   }
   window.addEventListener('resize', fitChatToViewport);
-  $('#ai-quick').innerHTML = SUGERENCIAS.map((s) => `<button type="button" class="chip" data-ask="${esc(s)}">${esc(s)}</button>`).join('');
   $('#ai-fab').addEventListener('click', () => openChat(true));
   $('#ai-close').addEventListener('click', () => openChat(false));
   $('#ai-teaser').addEventListener('click', (e) => {
@@ -363,12 +457,12 @@ async function ask(q) {
   const hora = fmt(c.sim.t);
   const local = answerLocal(q, c);
   let text = local;
-  let src = `Calculado con los datos del turno a las ${hora}`;
+  let src = tx(`Calculado con los datos del turno a las ${hora}`, `Computed from the shift data at ${hora}`);
   if (API_URL) {
     try {
-      const hist = log.filter((m) => m.who).slice(-7, -1).map((m) => ({ rol: m.who === 'user' ? 'usuario' : 'asistente', texto: m.text }));
+      const hist = log.filter((m) => m.who && !m.welcome).slice(-7, -1).map((m) => ({ rol: m.who === 'user' ? 'usuario' : 'asistente', texto: m.text }));
       text = await answerRemote(q, c, local, hist);
-      src = `Redactado por Claude (Amazon Bedrock) con el diagnóstico de las ${hora}`;
+      src = tx(`Redactado por Claude (Amazon Bedrock) con el diagnóstico de las ${hora}`, `Written by Claude (Amazon Bedrock) from the ${hora} diagnosis`);
     } catch {
       text = local;
     }
@@ -414,20 +508,20 @@ function paintKpis() {
       const shown = isPct ? diff * 100 : diff;
       const small = isPct ? Math.abs(shown) < 0.5 : Math.abs(diff) < Math.max(1, Math.abs(bv) * 0.05);
       const good = def.up ? diff > 0 : diff < 0;
-      const txt = `${shown > 0 ? '▲' : '▼'} ${Math.abs(shown).toLocaleString('es-ES', { maximumFractionDigits: isPct ? 1 : 0 })}${isPct ? ' p. p.' : def.unit === 'min' ? ' min' : ''} vs media`;
-      dEl.textContent = small ? '≈ media 14 días' : txt;
+      const txt = `${shown > 0 ? '▲' : '▼'} ${num(Math.abs(shown), isPct ? 1 : 0)}${isPct ? ppUnit() : def.unit === 'min' ? ' min' : ''} ${tx('vs media', 'vs avg')}`;
+      dEl.textContent = small ? tx('≈ media 14 días', '≈ 14-day average') : txt;
       dEl.className = `k-delta ${small ? 'flat' : good ? 'good' : 'bad'}`;
       const rel = Math.abs(diff) / (Math.abs(bv) || 1);
       alert = !small && !good && (isPct ? Math.abs(shown) > 4 : rel > 0.5);
     } else {
-      dEl.textContent = hist ? (v == null ? 'aún sin rutas salidas' : '') || ' ' : 'calculando media…';
+      dEl.textContent = hist ? (v == null ? tx('aún sin rutas salidas', 'no routes out yet') : '') || ' ' : tx('calculando media…', 'computing average…');
       dEl.className = 'k-delta flat';
     }
     el.classList.toggle('alert', alert);
     spark(el.querySelector('svg'), sim.hourly, hist, def.id === 'calle' ? 'calle' : def.id);
   }
   $('#clock').textContent = fmt(Math.floor(sim.clock ?? sim.t));
-  $('#shift').textContent = sim.terminado ? 'Turno terminado' : `Turno 06:00–22:00 · ${state.site.nombre}`;
+  $('#shift').textContent = sim.terminado ? tx('Turno terminado', 'Shift over') : `${tx('Turno', 'Shift')} 06:00–22:00 · ${state.site.nombre}`;
 }
 
 function paintBanner() {
@@ -435,9 +529,19 @@ function paintBanner() {
   const el = $('#banner');
   const activas = sim.incidencias.filter((w) => w.empezo && !w.acabo);
   let html = '';
-  if (sim.terminado) html = '<b>Turno terminado.</b> Pulsa «Reiniciar» para volver a las 06:00 o cambia de almacén.';
-  else if (activas.length) html = `<b>${activas.length} carretilla${activas.length > 1 ? 's' : ''} en el taller</b> (${activas.map((w) => w.f.id).join(', ')}) hasta las ${fmt(Math.max(...activas.map((w) => w.hasta)))}. <button type="button" class="link-btn" data-open-ai>Pregunta a la IA cómo afecta</button>`;
-  else if (sim.c.sinHueco > 0 && sim.freeLocations() < 3) html = '<b>Nave llena:</b> hay palés en recepción sin hueco donde ubicarlos.';
+  if (sim.terminado) {
+    html = tx('<b>Turno terminado.</b> Pulsa «Reiniciar» para volver a las 06:00 o cambia de almacén.', '<b>Shift over.</b> Press "Restart" to go back to 06:00 or switch warehouse.');
+  } else if (activas.length) {
+    const n = activas.length;
+    const ids = activas.map((w) => w.f.id).join(', ');
+    const h = fmt(Math.max(...activas.map((w) => w.hasta)));
+    html = tx(
+      `<b>${n} ${n > 1 ? 'carretillas' : 'carretilla'} en el taller</b> (${ids}) hasta las ${h}. <button type="button" class="link-btn" data-open-ai>Pregunta a la IA cómo afecta</button>`,
+      `<b>${n} ${n > 1 ? 'forklifts' : 'forklift'} in the workshop</b> (${ids}) until ${h}. <button type="button" class="link-btn" data-open-ai>Ask the AI how it affects the shift</button>`,
+    );
+  } else if (sim.c.sinHueco > 0 && sim.freeLocations() < 3) {
+    html = tx('<b>Nave llena:</b> hay palés en recepción sin hueco donde ubicarlos.', '<b>Warehouse full:</b> there are pallets in receiving with no location to go to.');
+  }
   el.hidden = !html;
   if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
 }
@@ -448,7 +552,7 @@ function paintFeed() {
   state.lastEvents = ev.length;
   const items = ev.slice(-80).reverse().map((e) => `<li class="${e.nivel}"><time>${fmt(e.t)}</time><span>${esc(e.texto)}</span></li>`).join('');
   $('#feed').innerHTML = items;
-  $('#feed-count').textContent = `${ev.length} eventos`;
+  $('#feed-count').textContent = tx(`${ev.length} eventos`, `${ev.length} events`);
 }
 
 function paintBadges() {
@@ -458,7 +562,7 @@ function paintBadges() {
   b.textContent = n;
 }
 
-let lastNetwork = -1;
+var lastNetwork = -1; // var: ídem
 function refreshAll() {
   paintKpis();
   paintBanner();

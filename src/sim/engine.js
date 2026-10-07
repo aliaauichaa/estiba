@@ -8,6 +8,7 @@ import {
   buildLayout, travel, routeNearest, routeAsListed, routeWaypoints, locationCost, LEVEL_PENALTY, DIM,
 } from './layout.js';
 import { FAMILIAS, TRANSPORTISTAS, PROVEEDORES } from '../data/sites.js';
+import { tx } from '../i18n.js';
 
 export const SHIFT_START = 6 * 60;
 export const SHIFT_END = 22 * 60;
@@ -24,6 +25,8 @@ export const fmt = (t) => {
   const v = Math.max(0, Math.round(t));
   return `${pad(Math.floor(v / 60))}:${pad(v % 60)}`;
 };
+// Nombre de la ruta en inglés aunque la interfaz esté en español (para guardar el evento en ambos).
+const placeEn = (d) => d.split(' ').map((w) => ({ ciudad: 'city', tarde: 'PM', centro: 'centre' }[w] || w)).join(' ');
 const mean = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
 
 export class Simulation {
@@ -76,12 +79,15 @@ export class Simulation {
     let acc = 0;
     this.skus = raw.map((w, k) => {
       const fam = r.pick(FAMILIAS);
+      const vi = Math.floor(r() * fam.variantes.length); // = r.pick(variantes), conservando el índice
       const share = w / tot;
       acc += share;
       return {
         idx: k,
         code: `${fam.pref}-${1000 + ((k * 7919) % 9000)}`,
-        nombre: `${fam.nombre} · ${r.pick(fam.variantes)}`,
+        nombre_es: `${fam.nombre} · ${fam.variantes[vi]}`,
+        nombre_en: `${fam.nombre_en} · ${fam.variantes_en[vi]}`,
+        get nombre() { return tx(this.nombre_es, this.nombre_en); },
         familia: fam.nombre,
         share,
         demanda: share * dailyCases,
@@ -176,7 +182,8 @@ export class Simulation {
       }
       orders.push({
         id: '',
-        cliente: `Tienda ${route.destino.split(' ')[0]} ${pad(r.int(1, 48))}`,
+        tienda: `${route.destino.split(' ')[0]} ${pad(r.int(1, 48))}`,
+        get cliente() { return `${tx('Tienda', 'Store')} ${this.tienda}`; },
         release,
         route,
         lines,
@@ -250,12 +257,12 @@ export class Simulation {
       for (const inc of this.site.incidenciasHoy) {
         if (inc.tipo !== 'taller') continue;
         for (let k = 0; k < inc.unidades; k++) {
-          windows.push({ f: this.forklifts[n - 1 - k], desde: hm(inc.desde) + k * 6, hasta: hm(inc.hasta) - k * 10, motivo: inc.motivo });
+          windows.push({ f: this.forklifts[n - 1 - k], desde: hm(inc.desde) + k * 6, hasta: hm(inc.hasta) - k * 10, motivo_es: inc.motivo, motivo_en: inc.motivo_en || inc.motivo, get motivo() { return tx(this.motivo_es, this.motivo_en); } });
         }
       }
     } else if (this.rInc() < 0.15) {
       const desde = this.rInc.range(8 * 60, 16 * 60);
-      windows.push({ f: this.forklifts[this.rInc.int(0, n - 1)], desde, hasta: desde + this.rInc.range(60, 180), motivo: 'avería puntual' });
+      windows.push({ f: this.forklifts[this.rInc.int(0, n - 1)], desde, hasta: desde + this.rInc.range(60, 180), motivo_es: 'avería puntual', motivo_en: 'one-off breakdown', get motivo() { return tx(this.motivo_es, this.motivo_en); } });
     }
     windows.sort((a, b) => a.f.idx - b.f.idx);
     for (const w of windows) w.f.taller = w;
@@ -287,8 +294,10 @@ export class Simulation {
     if (this.leaving.length && this.leaving[0].t < t - 10) this.leaving = this.leaving.filter((x) => x.t >= t - 10);
   }
 
-  log(tipo, texto, nivel = 'info') {
-    this.events.push({ t: this.t, tipo, texto, nivel });
+  // Cada evento se guarda en los dos idiomas: el feed elige al pintarlo, así cambiar de idioma
+  // a mitad de turno traduce también lo que ya ha pasado.
+  log(tipo, es, en, nivel = 'info') {
+    this.events.push({ t: this.t, tipo, es, en, nivel, get texto() { return tx(this.es, this.en); } });
     if (this.events.length > 400) this.events.splice(0, this.events.length - 400);
   }
 
@@ -298,14 +307,14 @@ export class Simulation {
       if (!w.empezo && t >= w.desde) {
         w.empezo = true;
         f.tallerPend = true;
-        this.log('taller', `${f.id} sale de servicio: ${w.motivo} (vuelve hacia las ${fmt(w.hasta)})`, 'alerta');
+        this.log('taller', `${f.id} sale de servicio: ${w.motivo_es} (vuelve hacia las ${fmt(w.hasta)})`, `${f.id} out of service: ${w.motivo_en} (back around ${fmt(w.hasta)})`, 'alerta');
       }
       if (w.empezo && !w.acabo && t >= w.hasta) {
         w.acabo = true;
         f.tallerPend = false;
         if (f.enTaller) {
           f.enTaller = false;
-          this.log('taller', `${f.id} vuelve a estar operativa`, 'ok');
+          this.log('taller', `${f.id} vuelve a estar operativa`, `${f.id} is back in service`, 'ok');
         }
       }
     }
@@ -318,7 +327,8 @@ export class Simulation {
         tr.tPatio = t;
         this.yard.push(tr);
         const ret = tr.llegada - tr.eta;
-        this.log('llegada', `${tr.matricula} (${tr.transportista}) llega al patio con ${tr.pales.length} palés${ret > 15 ? `, ${Math.round(ret)} min tarde` : ''}`);
+        this.log('llegada', `${tr.matricula} (${tr.transportista}) llega al patio con ${tr.pales.length} palés${ret > 15 ? `, ${Math.round(ret)} min tarde` : ''}`,
+          `${tr.matricula} (${tr.transportista}) arrives in the yard with ${tr.pales.length} pallets${ret > 15 ? `, ${Math.round(ret)} min late` : ''}`);
       }
     }
     for (const d of this.L.inDocks) {
@@ -330,7 +340,8 @@ export class Simulation {
         tr.tMuelle = t;
         tr.espera = t - tr.tPatio;
         this.esperas.push(tr.espera);
-        this.log('muelle', `${tr.matricula} atraca en ${d.id}${tr.espera > 20 ? ` tras ${Math.round(tr.espera)} min de espera` : ''}`, tr.espera > 45 ? 'alerta' : 'info');
+        this.log('muelle', `${tr.matricula} atraca en ${d.id}${tr.espera > 20 ? ` tras ${Math.round(tr.espera)} min de espera` : ''}`,
+          `${tr.matricula} docks at ${d.id}${tr.espera > 20 ? ` after waiting ${Math.round(tr.espera)} min` : ''}`, tr.espera > 45 ? 'alerta' : 'info');
       }
       const tr = d.truck;
       if (!tr) continue;
@@ -353,7 +364,8 @@ export class Simulation {
         d.truck = null;
         this.c.camionesDescargados++;
         this.leaving.push({ truck: tr, dock: d, t });
-        this.log('salida', `${tr.matricula} termina en ${d.id}: ${Math.round(t - tr.tMuelle)} min en muelle${tr.bloqueo > 5 ? `, ${Math.round(tr.bloqueo)} parado con la calle llena` : ''}`, tr.bloqueo > 20 ? 'alerta' : 'info');
+        this.log('salida', `${tr.matricula} termina en ${d.id}: ${Math.round(t - tr.tMuelle)} min en muelle${tr.bloqueo > 5 ? `, ${Math.round(tr.bloqueo)} parado con la calle llena` : ''}`,
+          `${tr.matricula} done at ${d.id}: ${Math.round(t - tr.tMuelle)} min at the dock${tr.bloqueo > 5 ? `, ${Math.round(tr.bloqueo)} stopped by a full lane` : ''}`, tr.bloqueo > 20 ? 'alerta' : 'info');
       }
     }
   }
@@ -362,7 +374,8 @@ export class Simulation {
     for (const ro of this.routes) {
       if (!ro.camion && t >= ro.llegaCamion) {
         ro.camion = true;
-        this.log('ruta', `Atraca el camión de la ruta ${ro.destino} en ${ro.dock.id} (sale a las ${fmt(ro.salida)})`);
+        this.log('ruta', `Atraca el camión de la ruta ${ro.destino} en ${ro.dock.id} (sale a las ${fmt(ro.salida)})`,
+          `The ${placeEn(ro.destino)} route truck docks at ${ro.dock.id} (leaves at ${fmt(ro.salida)})`);
       }
       if (!ro.salio && t >= ro.salida) {
         ro.salio = true;
@@ -383,7 +396,8 @@ export class Simulation {
         }
         ro.expedidos = ok;
         const late = ro.pedidos.length - ok;
-        this.log('ruta', `Sale la ruta ${ro.destino}: ${ok}/${ro.pedidos.length} pedidos${late ? `, ${late} se quedan en tierra` : ''}`, late > 0 ? 'alerta' : 'ok');
+        this.log('ruta', `Sale la ruta ${ro.destino}: ${ok}/${ro.pedidos.length} pedidos${late ? `, ${late} se quedan en tierra` : ''}`,
+          `The ${placeEn(ro.destino)} route leaves: ${ok}/${ro.pedidos.length} orders${late ? `, ${late} left behind` : ''}`, late > 0 ? 'alerta' : 'ok');
       }
     }
   }
@@ -429,7 +443,8 @@ export class Simulation {
     if (!dest) {
       if (!best.bloqueado) {
         this.c.sinHueco++;
-        this.log('hueco', `Sin hueco libre para un palé de ${this.skus[best.sku].code} en ${best.dock.id}`, 'alerta');
+        this.log('hueco', `Sin hueco libre para un palé de ${this.skus[best.sku].code} en ${best.dock.id}`,
+          `No free location for a ${this.skus[best.sku].code} pallet at ${best.dock.id}`, 'alerta');
       }
       best.bloqueado = this.t;
       return null;

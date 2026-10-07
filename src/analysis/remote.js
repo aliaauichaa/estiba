@@ -4,6 +4,7 @@
 
 import { diagnose } from './assistant.js';
 import { fmt } from '../sim/engine.js';
+import { lang, placeName } from '../i18n.js';
 
 export const API_URL = import.meta.env?.VITE_ESTIBA_API || '';
 
@@ -22,7 +23,7 @@ function contexto(ctx) {
     },
     mediaMismaHora: d.b ? { otif: round(d.b.otif), fill: round(d.b.fill), dockToStockMin: round(d.b.dts, 0), utilizacion: round(d.b.utilizacion) } : null,
     hallazgos: d.hallazgos.map((h) => ({ titulo: h.titulo, detalle: h.detalle, accion: h.accion })),
-    rutas: d.rutas.map((r) => ({ destino: r.ro.destino, salida: fmt(r.ro.salida), estado: r.estado, pedidosListos: r.listos, pedidosEnPreparacion: r.enCurso, pedidosPendientes: r.pendientes, pedidosAunNoLiberados: r.sinLiberar, pedidosTotal: r.total, expedidos: r.ro.salio ? r.ro.expedidos : null })),
+    rutas: d.rutas.map((r) => ({ destino: placeName(r.ro.destino), salida: fmt(r.ro.salida), estado: r.estado, pedidosListos: r.listos, pedidosEnPreparacion: r.enCurso, pedidosPendientes: r.pendientes, pedidosAunNoLiberados: r.sinLiberar, pedidosTotal: r.total, expedidos: r.ro.salio ? r.ro.expedidos : null })),
     slotting: ctx.opt ? {
       minutosPedidoActual: round(ctx.opt.escenarios[0].minutosPedido, 1),
       minutosPedidoABC: round(ctx.opt.escenarios[2].minutosPedido, 1),
@@ -38,7 +39,7 @@ export async function answerRemote(question, ctx, local, historial = []) {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pregunta: question, contexto: contexto(ctx), respuestaBase: local, historial: historial.slice(-6) }),
+      body: JSON.stringify({ idioma: lang, pregunta: question, contexto: contexto(ctx), respuestaBase: local, historial: historial.slice(-6) }),
       signal: ctrl.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

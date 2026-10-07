@@ -61,3 +61,22 @@ test('el asistente encuentra la causa en Zaragoza', async () => {
   assert.ok(routeStatus(sim).some((x) => x.estado === 'riesgo'));
   assert.match(answerLocal('¿Cómo va la ruta de Pamplona?', ctx), /Ruta Pamplona/);
 });
+
+test('el asistente contesta en inglés si la interfaz está en inglés', async () => {
+  const { setLang } = await import('../src/i18n.js');
+  const s = site('zgz');
+  const history = await computeHistory(s, 3);
+  const sim = new Simulation(s);
+  sim.advance(14.5 * 60 - sim.t);
+  const ctx = { sim, history, opt: analyzeSlotting(sim), network: () => [] };
+  setLang('en');
+  try {
+    const r = answerLocal('Why is OTIF dropping today?', ctx);
+    assert.match(r, /workshop/);
+    assert.doesNotMatch(r, /carretilla|taller/);
+    assert.match(answerLocal('How is the Pamplona route doing?', ctx), /Pamplona route/);
+    assert.match(sim.events.at(-1).texto, /^[\x00-\x7F]+$/, 'el evento sale en inglés');
+  } finally {
+    setLang('es');
+  }
+});

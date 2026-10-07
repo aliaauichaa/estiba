@@ -15,7 +15,8 @@ const TOPE = Number(process.env.TOPE_DIARIO || 300);
 let dia = '';
 let usadas = 0;
 
-const SISTEMA = `Eres el asistente de operaciones de Estiba, un gemelo digital de almacén. Respondes a un jefe de turno en español de España.
+const SISTEMA = `Eres el asistente de operaciones de Estiba, un gemelo digital de almacén. Respondes a un jefe de turno.
+- Idioma: el que indique <idioma> ("es" = español de España, "en" = inglés británico), aunque la pregunta venga en otro. Los datos pueden venir en el otro idioma: tradúcelos tú.
 Reglas:
 - Usa SOLO los datos del bloque <datos>. Si algo no está, dilo; no inventes cifras, causas ni nombres.
 - No hagas cuentas nuevas (restas, tiempos que faltan, porcentajes) salvo que estén en los datos. Las cifras de rutas son PEDIDOS, nunca palés.
@@ -47,6 +48,7 @@ export async function handler(event) {
     return reply(400, { error: 'JSON no válido' });
   }
   const pregunta = String(input.pregunta || '').slice(0, 300).trim();
+  const idioma = input.idioma === 'en' ? 'en' : 'es';
   if (!pregunta) return reply(400, { error: 'falta la pregunta' });
 
   const historial = Array.isArray(input.historial) ? input.historial.slice(-6) : [];
@@ -62,7 +64,8 @@ export async function handler(event) {
   if (mensajes.length && mensajes[mensajes.length - 1].role === 'user') mensajes.pop();
   mensajes.push({
     role: 'user',
-    content: `<datos>${JSON.stringify(input.contexto ?? {})}</datos>\n<respuesta_base>${String(input.respuestaBase || '').slice(0, 4000)}</respuesta_base>\n\nPregunta: ${pregunta}`,
+    content: `<idioma>${idioma}</idioma>
+<datos>${JSON.stringify(input.contexto ?? {})}</datos>\n<respuesta_base>${String(input.respuestaBase || '').slice(0, 4000)}</respuesta_base>\n\nPregunta: ${pregunta}`,
   });
 
   usadas++;

@@ -1,5 +1,9 @@
 # Estiba · gemelo digital de almacén
 
+*Español · [English](#english)*
+
+La interfaz y el asistente funcionan en español e inglés (botón ES/EN, o `?lang=en` en la URL).
+
 Simulación de un turno de almacén (06:00–22:00) en 3D, con indicadores logísticos, análisis de slotting
 y un asistente que explica las desviaciones con los datos del propio turno.
 
@@ -68,3 +72,29 @@ Sin esa variable, el asistente responde solo con el motor local.
 Todos los datos son simulados: almacenes, pedidos, proveedores y transportistas son ficticios.
 
 Autor: [Ali Aauicha](https://www.linkedin.com/in/ali-aauicha/)
+
+---
+
+## English
+
+**Estiba** is a 3D warehouse digital twin. It simulates a full shift (06:00–22:00), from trucks arriving in the yard
+to routes leaving on time, and every forklift, truck and pallet on screen comes from that simulation.
+
+**Live demo: https://d1ex3zlctjya5a.cloudfront.net/?lang=en**
+
+- **Three fictional warehouses** (Zaragoza, Madrid, Barcelona), each with its own issue: two forklifts in the
+  workshop, a healthy baseline, and a nearly full building with old slotting.
+- **End-to-end flow:** yard → dock → receiving lane → put-away → stock available → wave release → picking → route departure.
+  A failure in one link shows up in the next ones.
+- **KPIs:** OTIF, line fill rate, dock-to-stock, equipment utilisation and productivity, occupancy and pallets in lanes,
+  each compared with the average of the previous 14 days **at the same time of day**.
+- **Optimisation:** "as is" vs "optimised routing" vs "ABC slotting + routing" on today's orders, the highest-impact
+  relocations, and a full re-simulation of the day with the proposed slotting.
+- **AI assistant** (floating bubble): answers "why is OTIF dropping?", "which routes are at risk?" or "what should I do now?"
+  by walking the chain of causes. The diagnosis is computed in the browser; Claude on Amazon Bedrock writes the answer
+  from it, in the interface language.
+
+Built with Vite + Three.js + plain JavaScript; deployed on S3 + CloudFront (OAC) with a Lambda Function URL for the
+assistant. `npm install`, `npm run dev`, `npm test`. All data is simulated.
+
+Author: [Ali Aauicha](https://www.linkedin.com/in/ali-aauicha/)

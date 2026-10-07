@@ -27,7 +27,7 @@ export const SITES = [
       ['Pamplona', '14:30'], ['Teruel', '16:00'], ['Calatayud', '17:30'], ['Soria', '19:00'], ['Zaragoza tarde', '20:30'],
     ],
     incidenciasHoy: [
-      { tipo: 'taller', unidades: 2, desde: '09:45', hasta: '15:30', motivo: 'revisión de mástil y baterías' },
+      { tipo: 'taller', unidades: 2, desde: '09:45', hasta: '15:30', motivo: 'revisión de mástil y baterías', motivo_en: 'mast and battery service' },
     ],
   },
   {
@@ -78,13 +78,26 @@ export const SITES = [
   },
 ];
 
+// Cada variante va en los dos idiomas, en el mismo orden (el motor elige por posición).
 export const FAMILIAS = [
-  { pref: 'BEB', nombre: 'Bebidas', variantes: ['agua 1,5 L x6', 'refresco lata x24', 'zumo 1 L x6', 'cerveza x12', 'isotónica x12'] },
-  { pref: 'DRO', nombre: 'Droguería', variantes: ['detergente 3 L', 'suavizante 2 L', 'lavavajillas x3', 'papel higiénico x12', 'lejía 2 L'] },
-  { pref: 'ALI', nombre: 'Alimentación seca', variantes: ['aceite 1 L x12', 'arroz 1 kg x10', 'pasta 500 g x20', 'legumbre x12', 'tomate frito x24'] },
-  { pref: 'PER', nombre: 'Perfumería', variantes: ['gel 750 ml x6', 'champú x6', 'pasta dental x12', 'desodorante x12'] },
-  { pref: 'BAZ', nombre: 'Bazar', variantes: ['menaje caja', 'pilas x24', 'bolsas basura x20', 'film x12'] },
-  { pref: 'MAS', nombre: 'Mascotas', variantes: ['pienso 4 kg', 'arena 10 L', 'snacks x12'] },
+  { pref: 'BEB', nombre: 'Bebidas', nombre_en: 'Beverages',
+    variantes: ['agua 1,5 L x6', 'refresco lata x24', 'zumo 1 L x6', 'cerveza x12', 'isotónica x12'],
+    variantes_en: ['water 1.5 L x6', 'soft drink can x24', 'juice 1 L x6', 'beer x12', 'sports drink x12'] },
+  { pref: 'DRO', nombre: 'Droguería', nombre_en: 'Household',
+    variantes: ['detergente 3 L', 'suavizante 2 L', 'lavavajillas x3', 'papel higiénico x12', 'lejía 2 L'],
+    variantes_en: ['detergent 3 L', 'fabric softener 2 L', 'dish soap x3', 'toilet paper x12', 'bleach 2 L'] },
+  { pref: 'ALI', nombre: 'Alimentación seca', nombre_en: 'Dry grocery',
+    variantes: ['aceite 1 L x12', 'arroz 1 kg x10', 'pasta 500 g x20', 'legumbre x12', 'tomate frito x24'],
+    variantes_en: ['olive oil 1 L x12', 'rice 1 kg x10', 'pasta 500 g x20', 'pulses x12', 'tomato sauce x24'] },
+  { pref: 'PER', nombre: 'Perfumería', nombre_en: 'Personal care',
+    variantes: ['gel 750 ml x6', 'champú x6', 'pasta dental x12', 'desodorante x12'],
+    variantes_en: ['shower gel 750 ml x6', 'shampoo x6', 'toothpaste x12', 'deodorant x12'] },
+  { pref: 'BAZ', nombre: 'Bazar', nombre_en: 'Home & bazaar',
+    variantes: ['menaje caja', 'pilas x24', 'bolsas basura x20', 'film x12'],
+    variantes_en: ['kitchenware box', 'batteries x24', 'bin bags x20', 'cling film x12'] },
+  { pref: 'MAS', nombre: 'Mascotas', nombre_en: 'Pet care',
+    variantes: ['pienso 4 kg', 'arena 10 L', 'snacks x12'],
+    variantes_en: ['dry pet food 4 kg', 'cat litter 10 L', 'pet treats x12'] },
 ];
 
 export const TRANSPORTISTAS = [

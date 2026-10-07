@@ -68,6 +68,9 @@ h3 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
 .speed button.on { background: var(--amber-soft); color: var(--amber); }
 .ghost-btn { border: 1px solid var(--line-2); background: transparent; border-radius: 8px; padding: 6px 12px; cursor: pointer; color: var(--muted); }
 .ghost-btn:hover { color: var(--text); border-color: var(--muted); }
+.lang { display: flex; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.lang button { border: 0; background: transparent; padding: 4px 8px; border-radius: 6px; cursor: pointer; color: var(--muted); font: 600 12px var(--mono); }
+.lang button.on { background: var(--panel-3); color: var(--text); }
 
 /* ------------------------------------------------------------------ KPIs */
 .kpis { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }

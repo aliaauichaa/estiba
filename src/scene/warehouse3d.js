@@ -6,6 +6,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { DIM } from '../sim/layout.js';
 import { trackPos } from '../sim/engine.js';
+import { tx, placeName } from '../i18n.js';
 
 const COL = {
   bg: 0x0d1117,
@@ -27,11 +28,18 @@ const CARTON = [0xc9a36b, 0xb8925c, 0xd4b37f, 0xa8875a, 0xc29a62];
 const HEAT = [new THREE.Color(0x1f2a38), new THREE.Color(0x3f6fc4), new THREE.Color(0xf5a524), new THREE.Color(0xff6b5e)];
 
 export const MODES = [
-  { id: 'operativa', nombre: 'Operativa' },
-  { id: 'ocupacion', nombre: 'Stock' },
-  { id: 'abc', nombre: 'ABC' },
-  { id: 'calor', nombre: 'Calor de picking' },
+  { id: 'operativa', get nombre() { return tx('Operativa', 'Operations'); } },
+  { id: 'ocupacion', get nombre() { return 'Stock'; } },
+  { id: 'abc', get nombre() { return 'ABC'; } },
+  { id: 'calor', get nombre() { return tx('Calor de picking', 'Picking heatmap'); } },
 ];
+
+const ZONAS = {
+  rec: () => tx('RECEPCIÓN', 'RECEIVING'),
+  exp: () => tx('EXPEDICIÓN', 'DISPATCH'),
+  patio: () => tx('PATIO', 'YARD'),
+  taller: () => tx('TALLER', 'WORKSHOP'),
+};
 
 const FORK_SCALE = 1.3;
 
@@ -353,13 +361,17 @@ export class WarehouseScene {
     }
     const inX = L.inDocks.reduce((s, d) => s + d.x, 0) / L.inDocks.length;
     const outX = L.outDocks.reduce((s, d) => s + d.x, 0) / L.outDocks.length;
-    const a = label('RECEPCIÓN', 'zone');
+    const a = label(ZONAS.rec(), 'zone');
+    a.userData.zona = 'rec';
     a.position.set(inX, 0.1, 11.2);
-    const b = label('EXPEDICIÓN', 'zone');
+    const b = label(ZONAS.exp(), 'zone');
+    b.userData.zona = 'exp';
     b.position.set(outX, 0.1, 11.2);
-    const c = label('PATIO', 'zone');
+    const c = label(ZONAS.patio(), 'zone');
+    c.userData.zona = 'patio';
     c.position.set(L.W / 2, 0.1, -36);
-    const t = label('TALLER', 'zone');
+    const t = label(ZONAS.taller(), 'zone');
+    t.userData.zona = 'taller';
     t.position.set(L.taller.x - 1.2, 0.1, L.taller.z - 4.5);
     this.root.add(a, b, c, t);
   }
@@ -449,6 +461,12 @@ export class WarehouseScene {
   }
 
   // ------------------------------------------------------------------ actualización
+
+  relabel() {
+    this.root.traverse((o) => {
+      if (o.isCSS2DObject && o.userData.zona) o.element.textContent = ZONAS[o.userData.zona]();
+    });
+  }
 
   setMode(mode) {
     this.mode = mode;
@@ -633,7 +651,7 @@ export class WarehouseScene {
       place(o, ro.dock.x, since < 0 ? -0.45 : -0.45 - since * 9);
       if (o.lab) {
         const ready = ro.pedidos.filter((p) => p.estado === 'preparado' || p.estado === 'expedido').length;
-        o.lab.element.textContent = `${ro.destino} · ${ready}/${ro.pedidos.length}`;
+        o.lab.element.textContent = `${placeName(ro.destino)} · ${ready}/${ro.pedidos.length}`;
       }
     }
     for (const [key, o] of this.trucks) {

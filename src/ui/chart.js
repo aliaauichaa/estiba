@@ -1,15 +1,17 @@
 // Gráfica del turno en SVG: líneas preparadas por hora (barras), OTIF acumulado y equipos operativos,
 // con la media de los 14 días anteriores como referencia.
 
+import { tx, num, pct } from '../i18n.js';
+
 const H0 = 6;
 const H1 = 22;
 const NS = 'http://www.w3.org/2000/svg';
 
-export const CHART_LEGEND = [
-  { color: '#f5a524', label: 'Líneas/hora (hoy)' },
-  { color: '#5d6a7d', label: 'Líneas/hora (media 14 días)' },
-  { color: '#2ec4b6', label: 'OTIF acumulado' },
-  { color: '#6c9cf0', label: 'Carretillas operativas' },
+export const chartLegend = () => [
+  { color: '#f5a524', label: tx('Líneas/hora (hoy)', 'Lines/hour (today)') },
+  { color: '#5d6a7d', label: tx('Líneas/hora (media 14 días)', 'Lines/hour (14-day average)') },
+  { color: '#2ec4b6', label: tx('OTIF acumulado', 'Cumulative OTIF') },
+  { color: '#6c9cf0', label: tx('Carretillas operativas', 'Forklifts in service') },
 ];
 
 export class ShiftChart {
@@ -96,10 +98,15 @@ export class ShiftChart {
     if (hora < H0 || hora >= H1) { this.tip.hidden = true; return; }
     const r = this.sim.hourly.find((x) => x.hora === hora);
     const b = this.history?.hourly.get(hora);
-    const p = (v) => (v == null ? '—' : `${(v * 100).toFixed(1).replace('.', ',')} %`);
+    const p = (v) => pct(v);
+    const avg = tx('media', 'avg');
     const lines = [`<b>${String(hora).padStart(2, '0')}:00–${String(hora + 1).padStart(2, '0')}:00</b>`];
-    if (r) lines.push(`Líneas: ${r.lineas} (media ${b ? Math.round(b.lineas) : '—'})`, `OTIF: ${p(r.otif)} (media ${p(b?.otif)})`, `Carretillas: ${r.equipos.toFixed(1).replace('.', ',')}`, `Palés en calles: ${r.calle.toFixed(0)}`);
-    else lines.push(`Media: ${b ? Math.round(b.lineas) : '—'} líneas · OTIF ${p(b?.otif)}`);
+    if (r) {
+      lines.push(`${tx('Líneas', 'Lines')}: ${r.lineas} (${avg} ${b ? num(b.lineas) : '—'})`, `OTIF: ${p(r.otif)} (${avg} ${p(b?.otif)})`,
+        `${tx('Carretillas', 'Forklifts')}: ${num(r.equipos, 1)}`, `${tx('Palés en calles', 'Pallets in lanes')}: ${num(r.calle)}`);
+    } else {
+      lines.push(`${tx('Media', 'Average')}: ${b ? num(b.lineas) : '—'} ${tx('líneas', 'lines')} · OTIF ${p(b?.otif)}`);
+    }
     this.tip.innerHTML = lines.join('<br>');
     this.tip.hidden = false;
     const x = this.pad.l + (hora - H0 + 0.5) * this.bw;
