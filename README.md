@@ -9,7 +9,7 @@ y un asistente que explica las desviaciones con los datos del propio turno.
 
 **Demo en vivo: https://d1ex3zlctjya5a.cloudfront.net**
 
-[![Estiba: nave en 3D con indicadores del turno, carretillas en el taller y asistente con IA](docs/captura.png)](https://d1ex3zlctjya5a.cloudfront.net)
+[![Estiba: nave en 3D con indicadores del turno, carretillas en el taller y asistente con IA](docs/captura.png)](https://d1ex3zlctjya5a.cloudfront.net/?lang=es)
 
 No es una maqueta: cada carretilla, camión y palé que se ve sale de un motor de simulación por eventos,
 y los indicadores se calculan sobre lo que ocurre en él.
@@ -81,6 +81,8 @@ Autor: [Ali Aauicha](https://www.linkedin.com/in/ali-aauicha/)
 to routes leaving on time, and every forklift, truck and pallet on screen comes from that simulation.
 
 **Live demo: https://d1ex3zlctjya5a.cloudfront.net/?lang=en**
+
+[![Estiba: 3D warehouse with shift KPIs, forklifts in the workshop and the AI assistant](docs/captura-en.png)](https://d1ex3zlctjya5a.cloudfront.net/?lang=en)
 
 - **Three fictional warehouses** (Zaragoza, Madrid, Barcelona), each with its own issue: two forklifts in the
   workshop, a healthy baseline, and a nearly full building with old slotting.
