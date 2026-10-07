@@ -13,7 +13,7 @@ Set-Location $PSScriptRoot
 
 if ($Lambda) {
   if (Test-Path asistente.zip) { Remove-Item asistente.zip }
-  Compress-Archive -Path lambda/asistente/index.mjs -DestinationPath asistente.zip -Force
+  Compress-Archive -Path lambda/asistente/index.mjs, lambda/asistente/cifras.mjs -DestinationPath asistente.zip -Force
   aws lambda update-function-code --region $Region --function-name estiba-asistente --zip-file fileb://asistente.zip --query "[FunctionName,LastUpdateStatus]" --output text
   aws lambda wait function-updated --region $Region --function-name estiba-asistente
   Remove-Item asistente.zip

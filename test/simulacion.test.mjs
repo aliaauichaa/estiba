@@ -80,3 +80,34 @@ test('el asistente contesta en inglés si la interfaz está en inglés', async (
     setLang('es');
   }
 });
+
+test('la comprobación de cifras deja pasar los datos y caza las cuentas del modelo', async () => {
+  const { contexto } = await import('../src/analysis/remote.js');
+  const { permitidas, cifrasInventadas } = await import('../lambda/asistente/cifras.mjs');
+  const { setLang } = await import('../src/i18n.js');
+  const s = site('zgz');
+  const history = await computeHistory(s, 3);
+  const sim = new Simulation(s);
+  sim.advance(14.5 * 60 - sim.t);
+  const ctx = { sim, history, opt: analyzeSlotting(sim), network: () => [] };
+  for (const l of ['es', 'en']) {
+    setLang(l);
+    try {
+      for (const q of ['¿Por qué baja el OTIF hoy?', 'Which routes are at risk?', '¿Qué hago ahora mismo?', 'How much would ABC slotting save?', '¿Cómo va el turno?']) {
+        const base = answerLocal(q, ctx);
+        const permit = permitidas(contexto(ctx), base, q);
+        // La propia respuesta base nunca puede dar falsos positivos (si no, siempre caería en ella).
+        assert.deepEqual(cifrasInventadas(base, permit), [], `${l}: ${q}`);
+      }
+    } finally {
+      setLang('es');
+    }
+  }
+  const permit = permitidas(contexto(ctx), answerLocal('Why is OTIF dropping?', ctx));
+  const logrono = sim.routes.find((r) => r.destino === 'Logroño');
+  const faltan = logrono.pedidos.length - logrono.expedidos;
+  // «faltan» sí está (pedidosQueSeQuedaron); una suma de dos rutas o una hora inventada no.
+  assert.deepEqual(cifrasInventadas(`Logroño left ${faltan} orders behind.`, permit), []);
+  assert.ok(cifrasInventadas('Both routes left 1234 orders behind; back at 16:47.', permit).length === 2);
+  assert.deepEqual(cifrasInventadas('C-04 and C-05 are in the workshop; E3 and R1 are free.', permit), []);
+});

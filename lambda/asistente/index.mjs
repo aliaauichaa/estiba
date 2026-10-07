@@ -8,6 +8,7 @@
 //   TOPE_DIARIO      llamadas por día y contenedor (protección básica de coste, por defecto 300)
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { permitidas, cifrasInventadas } from './cifras.mjs';
 
 const bedrock = new BedrockRuntimeClient({ region: process.env.BEDROCK_REGION || 'us-east-1', maxAttempts: 1 });
 const MODELO = process.env.MODELO || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
@@ -19,7 +20,9 @@ const SISTEMA = `Eres el asistente de operaciones de Estiba, un gemelo digital d
 - Idioma: el que indique <idioma> ("es" = español de España, "en" = inglés británico), aunque la pregunta venga en otro. Los datos pueden venir en el otro idioma: tradúcelos tú.
 Reglas:
 - Usa SOLO los datos del bloque <datos>. Si algo no está, dilo; no inventes cifras, causas ni nombres.
-- No hagas cuentas nuevas (restas, tiempos que faltan, porcentajes) salvo que estén en los datos. Las cifras de rutas son PEDIDOS, nunca palés.
+- CIFRAS: escribe solo cifras y horas que aparezcan tal cual en <datos> o en <respuesta_base>. Prohibido calcular: nada de restas, sumas, diferencias, totales, medias ni porcentajes nuevos. Si te falta una cifra, descríbelo sin número.
+- No inventes plazos ni horizontes («la próxima hora», «esta tarde») que no estén en los datos.
+- Las cifras de rutas son PEDIDOS, nunca palés.
 - Estados de ruta: "ok" = a tiempo, "justa", "riesgo" = en riesgo, "salio-ok" / "salio-tarde" = ya salió completa / incompleta.
 - Las acciones que propongas salen de "accion" en los hallazgos o de la respuesta base; no añadas otras.
 - La <respuesta_base> ya está calculada y es correcta: úsala como fuente principal y mejora la redacción, no la contradigas.
@@ -69,19 +72,40 @@ export async function handler(event) {
   });
 
   usadas++;
+  const base = String(input.respuestaBase || '');
+  const permit = permitidas(input.contexto ?? {}, base, pregunta);
   try {
-    const out = await bedrock.send(new InvokeModelCommand({
-      modelId: MODELO,
-      contentType: 'application/json',
-      accept: 'application/json',
-      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 600, temperature: 0.2, system: SISTEMA, messages: mensajes }),
-    }));
-    const data = JSON.parse(new TextDecoder().decode(out.body));
-    const texto = (data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
+    // Primer intento; si escribe alguna cifra que no está en los datos, se le pide que lo rehaga
+    // sin ella. Si aun así falla, se devuelve la respuesta base (calculada, correcta) y no la suya.
+    let texto = await llamar(mensajes);
+    let malas = cifrasInventadas(texto, permit);
+    if (malas.length) {
+      console.warn('cifras no permitidas (1.º intento)', malas.join(' '));
+      const aviso = idioma === 'en'
+        ? `Your answer contains figures that are not in the data: ${malas.join(', ')}. Rewrite it without them. Do not calculate anything: only figures that appear in <datos> or <respuesta_base>.`
+        : `Tu respuesta tiene cifras que no están en los datos: ${malas.join(', ')}. Reescríbela sin ellas. No calcules nada: solo cifras que aparezcan en <datos> o en <respuesta_base>.`;
+      texto = await llamar([...mensajes, { role: 'assistant', content: texto }, { role: 'user', content: aviso }]);
+      malas = cifrasInventadas(texto, permit);
+    }
+    if (malas.length) {
+      console.warn('cifras no permitidas (2.º intento): se usa la respuesta base', malas.join(' '));
+      return reply(200, { texto: base, fuente: 'base' });
+    }
     if (!texto) return reply(502, { error: 'respuesta vacía' });
-    return reply(200, { texto });
+    return reply(200, { texto, fuente: 'modelo' });
   } catch (e) {
     console.error('bedrock', e.name, e.message);
     return reply(502, { error: 'el modelo no respondió' });
   }
+}
+
+async function llamar(messages) {
+  const out = await bedrock.send(new InvokeModelCommand({
+    modelId: MODELO,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 600, temperature: 0, system: SISTEMA, messages }),
+  }));
+  const data = JSON.parse(new TextDecoder().decode(out.body));
+  return (data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('').trim();
 }
