@@ -111,3 +111,34 @@ test('la comprobación de cifras deja pasar los datos y caza las cuentas del mod
   assert.ok(cifrasInventadas('Both routes left 1234 orders behind; back at 16:47.', permit).length === 2);
   assert.deepEqual(cifrasInventadas('C-04 and C-05 are in the workshop; E3 and R1 are free.', permit), []);
 });
+
+test('las recomendaciones solo salen de la lista cerrada', async () => {
+  const { recomendaciones } = await import('../lambda/asistente/acciones.mjs');
+  const { accionesDisponibles, diagnose } = await import('../src/analysis/assistant.js');
+  const { setLang } = await import('../src/i18n.js');
+  const s = site('zgz');
+  const history = await computeHistory(s, 3);
+  const sim = new Simulation(s);
+  sim.advance(14.5 * 60 - sim.t);
+  const ctx = { sim, history, opt: analyzeSlotting(sim), network: () => [] };
+  for (const l of ['es', 'en']) {
+    setLang(l);
+    try {
+      const ids = accionesDisponibles(diagnose(sim, history)).map((a) => a.id);
+      assert.ok(ids.includes('taller') && ids.includes('rutas'), ids.join());
+      // La respuesta base que recibe el modelo no lleva consejos (si no, la copiaría y se rechazaría).
+      for (const q of ['¿Por qué baja el OTIF hoy?', 'What should I do right now?', 'How are the forklifts doing?', '¿Cómo va la recepción?', '¿Hay huecos libres?']) {
+        const base = answerLocal(q, ctx, { sinAcciones: true });
+        assert.deepEqual(recomendaciones(base), [], `${l}: ${q}\n${base}`);
+      }
+    } finally {
+      setLang('es');
+    }
+  }
+  assert.ok(recomendaciones('Bring in a rental forklift for the next hour.').length);
+  assert.ok(recomendaciones('- **Prioriza** Lleida y Logroño.').length);
+  assert.ok(recomendaciones('You should release Teruel now.').length);
+  assert.ok(recomendaciones('Conviene adelantar la ruta de Soria.').length);
+  assert.deepEqual(recomendaciones('Two forklifts are in the workshop until 15:30, so only 3 of 5 trucks are working.'), []);
+  assert.deepEqual(recomendaciones('La ruta de Pamplona salió con 13 de 38 pedidos porque faltaban carretillas.'), []);
+});

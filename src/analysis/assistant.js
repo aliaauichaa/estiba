@@ -181,7 +181,20 @@ export function sugerencias() {
   );
 }
 
-export function answerLocal(question, ctx) {
+// sinAcciones: versión para pasar al modelo como respuesta base, sin recomendaciones (las acciones
+// le llegan aparte como lista cerrada y no debe reescribirlas).
+let SIN_ACCIONES = false;
+
+export function answerLocal(question, ctx, { sinAcciones = false } = {}) {
+  SIN_ACCIONES = sinAcciones;
+  try {
+    return responder(question, ctx);
+  } finally {
+    SIN_ACCIONES = false;
+  }
+}
+
+function responder(question, ctx) {
   const q = norm(question);
   const { sim } = ctx;
   const d = diagnose(sim, ctx.history);
@@ -327,7 +340,7 @@ function recepcion(d, sim) {
     ),
   ];
   const h = d.hallazgos.find((x) => x.id === 'recepcion' || x.id === 'capacidad');
-  if (h) partes.push(`**${h.titulo}.** ${h.accion}`);
+  if (h) partes.push(`**${h.titulo}.** ${SIN_ACCIONES ? h.detalle : h.accion}`);
   return partes.join('\n\n');
 }
 
@@ -354,7 +367,7 @@ function equipos(d, sim) {
     `**${k.operativas} of ${k.totalCarretillas} forklifts in service.** Average utilisation ${pct(k.utilizacion)}${b?.utilizacion != null ? ` (usually ${pct(b.utilizacion)})` : ''}; productivity ${num(k.productividad)} lines per hour per truck.`,
   ), filas.join('\n')];
   const h = d.hallazgos.find((x) => x.id === 'taller' || x.id === 'carga');
-  if (h) partes.push(`${h.detalle}\n\n**${tx('Qué haría', 'What I would do')}:** ${h.accion}`);
+  if (h) partes.push(SIN_ACCIONES ? h.detalle : `${h.detalle}\n\n**${tx('Qué haría', 'What I would do')}:** ${h.accion}`);
   return partes.join('\n\n');
 }
 
@@ -365,7 +378,7 @@ function capacidad(d, sim) {
   return [
     tx(`La nave tiene ${sim.L.locations.length} huecos: **${libres} libres** (ocupación ${pct(k.ocupacion)}).`,
       `The warehouse has ${sim.L.locations.length} locations: **${libres} free** (occupancy ${pct(k.ocupacion)}).`),
-    h ? `${h.detalle}\n\n**${tx('Qué haría', 'What I would do')}:** ${h.accion}`
+    h ? (SIN_ACCIONES ? h.detalle : `${h.detalle}\n\n**${tx('Qué haría', 'What I would do')}:** ${h.accion}`)
       : tx('Hay margen suficiente para la recepción prevista de hoy.', 'There is enough room for today\'s expected deliveries.'),
   ].join('\n\n');
 }
@@ -401,16 +414,30 @@ function slotting(opt) {
   ].join('\n'));
 }
 
-function acciones(d) {
-  const { hallazgos, rutas: rs } = d;
-  const riesgo = rs.filter((r) => r.estado === 'riesgo');
-  const items = [];
+// Lista cerrada de acciones que salen del diagnóstico. Es lo único que el asistente puede
+// recomendar: la respuesta local las usa tal cual y el modelo solo puede elegir entre ellas.
+export function accionesDisponibles(d) {
+  const riesgo = d.rutas.filter((r) => r.estado === 'riesgo');
+  const out = [];
   if (riesgo.length) {
     const lista = riesgo.map((r) => `${route(r.ro)} (${fmt(r.ro.salida)})`).join(', ');
-    items.push(tx(`**Rutas:** concentrar equipos en ${lista}; avisar al cliente si no da tiempo, antes de la hora de salida.`,
-      `**Routes:** focus equipment on ${lista}; warn the customer before departure time if it will not make it.`));
+    out.push({
+      id: 'rutas',
+      titulo: tx('Rutas', 'Routes'),
+      texto: tx(`Concentrar equipos en ${lista}; avisar al cliente si no da tiempo, antes de la hora de salida.`,
+        `Focus equipment on ${lista}; warn the customer before departure time if it will not make it.`),
+    });
   }
-  for (const h of hallazgos) items.push(`**${h.titulo}:** ${h.accion}`);
+  for (const h of d.hallazgos) out.push({ id: h.id, titulo: h.titulo, texto: h.accion });
+  return out;
+}
+
+function acciones(d) {
+  if (SIN_ACCIONES) {
+    if (!d.hallazgos.length) return tx('Ahora mismo no hay nada urgente: el turno va en línea con lo habitual.', 'Nothing urgent right now: the shift is in line with normal.');
+    return `${tx('Situación', 'Situation')}:\n${d.hallazgos.map((h) => `- **${h.titulo}.** ${h.detalle}`).join('\n')}`;
+  }
+  const items = accionesDisponibles(d).map((a) => `**${a.titulo}:** ${a.texto}`);
   if (!items.length) {
     return tx('Ahora mismo no hay nada urgente: el turno va en línea con lo habitual. Buen momento para adelantar la preparación de las rutas de la tarde o para hacer recuentos cíclicos.',
       'Nothing urgent right now: the shift is in line with normal. A good moment to pick the afternoon routes early or run cycle counts.');

@@ -462,7 +462,8 @@ async function ask(q) {
     try {
       const hist = log.filter((m) => m.who && !m.welcome).slice(-7, -1).map((m) => ({ rol: m.who === 'user' ? 'usuario' : 'asistente', texto: m.text }));
       const r = await answerRemote(q, c, local, hist);
-      text = r.texto;
+      // Si la Lambda descartó la redacción del modelo, se enseña la respuesta local completa.
+      text = r.fuente === 'modelo' ? r.texto : local;
       // Si la Lambda descartó la redacción del modelo (cifras que no estaban en los datos), llega la base.
       if (r.fuente === 'modelo') src = tx(`Redactado por Claude (Amazon Bedrock) con el diagnóstico de las ${hora}`, `Written by Claude (Amazon Bedrock) from the ${hora} diagnosis`);
     } catch {
