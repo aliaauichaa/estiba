@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Estiba · Gemelo digital de almacén</title>
+  <meta name="description" content="Estiba: gemelo digital de almacén en 3D. Simula la operativa de un turno (recepción, ubicación, picking y expedición), calcula OTIF, fill rate y dock-to-stock, propone slotting ABC y explica las desviaciones." />
+  <meta name="author" content="Ali Aauicha" />
+  <meta name="theme-color" content="#0d1117" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <header class="top">
+      <a class="brand" href="./" aria-label="Estiba, inicio">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M16 3 29 10 16 17 3 10Z" fill="#f5a524" />
+          <path d="M3 13.5 16 20.5 29 13.5V17L16 24 3 17Z" fill="#c9821a" />
+          <path d="M3 20.5 16 27.5 29 20.5V24L16 31 3 24Z" fill="#8a5a14" />
+        </svg>
+        <span class="brand-text"><b>Estiba</b><small>Gemelo digital de almacén</small></span>
+      </a>
+      <nav class="sites" id="sites" aria-label="Almacenes"></nav>
+      <div class="clock" aria-label="Control de la simulación">
+        <button class="icon-btn" id="play" aria-label="Pausar">
+          <svg viewBox="0 0 24 24" class="i-pause"><path d="M7 5h3v14H7zM14 5h3v14h-3z" /></svg>
+          <svg viewBox="0 0 24 24" class="i-play"><path d="M8 5v14l11-7z" /></svg>
+        </button>
+        <div class="time"><span id="clock">--:--</span><small id="shift">Turno 06:00–22:00</small></div>
+        <div class="speed" id="speed" role="group" aria-label="Velocidad"></div>
+        <button class="ghost-btn" id="reset" title="Volver a empezar el día">Reiniciar</button>
+      </div>
+    </header>
+
+    <section class="kpis" id="kpis" aria-label="Indicadores"></section>
+
+    <main class="work">
+      <div class="viewport" id="viewport">
+        <div class="modes" id="modes" role="group" aria-label="Vista de la nave"></div>
+        <div class="banner" id="banner" hidden></div>
+        <div class="legend" id="legend"></div>
+        <div class="hint">Arrastra para mover · rueda para acercar · clic en una carretilla, un camión o un hueco</div>
+        <div class="loading" id="loading">Montando la nave…</div>
+      </div>
+      <aside class="side">
+        <div class="tabs" role="tablist" id="tabs"></div>
+        <div class="tab-body" id="tab-body"></div>
+      </aside>
+    </main>
+
+    <section class="bottom">
+      <div class="card chart-card">
+        <div class="card-head"><h3>Ritmo del turno</h3><div class="chart-legend" id="chart-legend"></div></div>
+        <div id="chart" class="chart"></div>
+      </div>
+      <div class="card feed-card">
+        <div class="card-head"><h3>Lo que está pasando</h3><span class="muted" id="feed-count"></span></div>
+        <ol class="feed" id="feed"></ol>
+      </div>
+    </section>
+
+    <footer class="foot">
+      <span>Datos simulados: almacenes, pedidos y transportistas son ficticios.</span>
+      <span>Proyecto de <a href="https://www.linkedin.com/in/ali-aauicha/" target="_blank" rel="noopener">Ali Aauicha</a> · Three.js + simulación propia</span>
+    </footer>
+  </div>
+  <!-- Asistente en burbuja flotante, como en Mi Campo y Quillaflow -->
+  <div class="ai-teaser" id="ai-teaser" hidden role="button" tabindex="0">
+    <button type="button" class="teaser-x" aria-label="Cerrar aviso">×</button>
+    <b>Pregunta a la IA</b>
+    <span>«¿Por qué baja el OTIF hoy?»</span>
+  </div>
+  <button type="button" class="ai-fab" id="ai-fab" aria-controls="ai-panel" aria-expanded="false" aria-label="Abrir el asistente de operaciones con IA">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3C6.5 3 2 6.8 2 11.5c0 2.3 1.1 4.4 2.9 5.9L4 21l4.3-1.9c1.2.4 2.4.6 3.7.6 5.5 0 10-3.8 10-8.5S17.5 3 12 3Z"/><path class="spark" d="M12 7.2l1.1 2.6 2.7 1.1-2.7 1.1L12 14.6l-1.1-2.6-2.7-1.1 2.7-1.1Z"/></svg>
+    <span class="ai-fab-tag">IA</span>
+  </button>
+  <section class="ai-panel" id="ai-panel" role="dialog" aria-label="Asistente de operaciones" hidden>
+    <header class="ai-top">
+      <div class="ai-top-ico" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M12 4l1.6 3.9L17.5 9.5l-3.9 1.6L12 15l-1.6-3.9L6.5 9.5l3.9-1.6Z"/><path d="M18 14l.8 1.9 1.9.8-1.9.8L18 19.4l-.8-1.9-1.9-.8 1.9-.8Z"/></svg>
+      </div>
+      <div class="ai-top-info"><b>Asistente de operaciones</b><small id="ai-sub">datos del turno en directo</small></div>
+      <button type="button" class="ai-close" id="ai-close" aria-label="Cerrar el asistente">×</button>
+    </header>
+    <div class="ai-msgs" id="ai-msgs" aria-live="polite"></div>
+    <div class="ai-quick" id="ai-quick"></div>
+    <form class="ai-input" id="ai-form">
+      <input id="ai-input" placeholder="Pregunta sobre el turno…" autocomplete="off" maxlength="300" aria-label="Tu pregunta" />
+      <button type="submit" id="ai-send" aria-label="Enviar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11.5 21 3l-8.5 18-2-7.5Z"/></svg>
+      </button>
+    </form>
+  </section>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
