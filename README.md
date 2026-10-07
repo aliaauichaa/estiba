@@ -5,6 +5,8 @@ y un asistente que explica las desviaciones con los datos del propio turno.
 
 **Demo en vivo: https://d1ex3zlctjya5a.cloudfront.net**
 
+[![Estiba: nave en 3D con indicadores del turno, carretillas en el taller y asistente con IA](docs/captura.png)](https://d1ex3zlctjya5a.cloudfront.net)
+
 No es una maqueta: cada carretilla, camión y palé que se ve sale de un motor de simulación por eventos,
 y los indicadores se calculan sobre lo que ocurre en él.
 
