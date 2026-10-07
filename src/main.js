@@ -283,12 +283,34 @@ function openChat(open = true) {
   $('#ai-fab').hidden = open;
   $('#ai-fab').setAttribute('aria-expanded', String(open));
   hideTeaser();
+  document.documentElement.classList.toggle('ai-open', open);
   if (open) {
+    fitChatToViewport();
     renderChat();
-    setTimeout(() => $('#ai-input').focus(), 50);
+    // En móvil no se abre el teclado solo: taparía el mensaje de bienvenida y las sugerencias.
+    if (!isTouch()) setTimeout(() => $('#ai-input').focus(), 50);
   } else {
-    $('#ai-fab').focus();
+    $('#ai-fab').focus({ preventScroll: true });
   }
+}
+
+const isTouch = () => window.matchMedia('(pointer: coarse)').matches;
+
+// Safari de iPhone: un panel position:fixed no sigue al teclado (ni con dvh); al abrirlo, la
+// cabecera y los mensajes se quedaban por encima de la zona visible. Se ajusta a mano al
+// visualViewport, igual que el chat de Quillaflow.
+function fitChatToViewport() {
+  const panel = $('#ai-panel');
+  const vv = window.visualViewport;
+  if (!vv || !state.chatOpen || window.innerWidth > 640) {
+    panel.style.top = '';
+    panel.style.height = '';
+    return;
+  }
+  panel.style.top = `${Math.round(vv.offsetTop + 8)}px`;
+  panel.style.height = `${Math.round(vv.height - 16)}px`;
+  const box = $('#ai-msgs');
+  box.scrollTop = box.scrollHeight;
 }
 
 function hideTeaser() {
@@ -296,6 +318,11 @@ function hideTeaser() {
 }
 
 function buildChat() {
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', fitChatToViewport);
+    window.visualViewport.addEventListener('scroll', fitChatToViewport);
+  }
+  window.addEventListener('resize', fitChatToViewport);
   $('#ai-quick').innerHTML = SUGERENCIAS.map((s) => `<button type="button" class="chip" data-ask="${esc(s)}">${esc(s)}</button>`).join('');
   $('#ai-fab').addEventListener('click', () => openChat(true));
   $('#ai-close').addEventListener('click', () => openChat(false));

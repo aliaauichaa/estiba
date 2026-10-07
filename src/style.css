@@ -232,6 +232,8 @@ table.t tr.click:hover td { background: var(--panel-2); }
 .ai-msgs::-webkit-scrollbar { width: 8px; }
 .ai-msgs::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
 @media (max-width: 640px) {
+  /* Con el chat abierto, la página de detrás no se desplaza (en iOS arrastraba el panel). */
+  html.ai-open, html.ai-open body { overflow: hidden; overscroll-behavior: none; }
   .ai-fab { right: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: 54px; height: 54px; }
   .ai-teaser { right: 78px; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
   .ai-panel { right: 8px; left: 8px; top: calc(8px + env(safe-area-inset-top, 0px)); bottom: auto; width: auto; max-width: none;
