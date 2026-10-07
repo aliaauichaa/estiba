@@ -11,8 +11,24 @@ import { tx, lang, setLang, onLang, pct, num, ppUnit } from './i18n.js';
 import { renderOverview, renderSelection, renderRoutes, renderOpt, riskCount } from './ui/panels.js';
 import { md, esc } from './ui/md.js';
 
-const START_AT = 10 * 60 + 30; // la demo arranca a media mañana, con la operativa ya en marcha
-const SPEEDS = [{ v: 1, l: '1×' }, { v: 4, l: '4×' }, { v: 12, l: '12×' }, { v: 30, l: '30×' }];
+// Modo «en vivo»: el reloj del almacén es la hora real de España, minuto a minuto. El turno es de
+// 06:00 a 22:00; de noche se reproduce el turno de día en diferido (22:00 → 10:00, 06:00 → 18:00)
+// para que siempre haya actividad, con su aviso.
+const NIGHT_REPLAY_FROM = 10 * 60;
+
+function madridNow() {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Madrid', hour: 'numeric', minute: 'numeric', second: 'numeric', hourCycle: 'h23' })
+    .formatToParts(new Date());
+  const get = (t) => Number(parts.find((p) => p.type === t)?.value || 0);
+  return get('hour') * 60 + get('minute') + get('second') / 60;
+}
+
+function liveTarget() {
+  const real = madridNow();
+  if (real >= SHIFT_START && real < SHIFT_END) return { t: real, replay: false, real };
+  const intoNight = (real - SHIFT_END + 1440) % 1440;
+  return { t: NIGHT_REPLAY_FROM + intoNight, replay: true, real };
+}
 const TABS = [
   { id: 'detalle', nombre: () => tx('Operativa', 'Operations') },
   { id: 'rutas', nombre: () => tx('Expediciones', 'Dispatch') },
@@ -31,9 +47,6 @@ const KPIS = [
 // Textos fijos de index.html: [selector, propiedad, es, en].
 const STATIC = [
   ['.brand-text small', 'textContent', 'Gemelo digital de almacén', 'Warehouse digital twin'],
-  ['#reset', 'textContent', 'Reiniciar', 'Restart'],
-  ['#reset', 'title', 'Volver a empezar el día', 'Start the day again'],
-  ['#speed', 'aria-label', 'Velocidad', 'Speed'],
   ['#sites', 'aria-label', 'Almacenes', 'Warehouses'],
   ['#modes', 'aria-label', 'Vista de la nave', 'Warehouse view'],
   ['.hint', 'textContent', 'Arrastra para mover · rueda para acercar · clic en una carretilla, un camión o un hueco', 'Drag to pan · scroll to zoom · click a forklift, a truck or a location'],
@@ -58,8 +71,6 @@ const $ = (s) => document.querySelector(s);
 const state = {
   site: SITES[0],
   sim: null,
-  playing: true,
-  speed: 4,
   tab: 'detalle',
   sel: null,
   mode: 'operativa',
@@ -83,15 +94,6 @@ function buildChrome() {
     const b = e.target.closest('[data-site]');
     if (b) loadSite(b.dataset.site);
   });
-  $('#speed').innerHTML = SPEEDS.map((s) => `<button data-speed="${s.v}">${s.l}</button>`).join('');
-  $('#speed').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-speed]');
-    if (!b) return;
-    state.speed = Number(b.dataset.speed);
-    paintSpeed();
-  });
-  $('#play').addEventListener('click', () => setPlaying(!state.playing));
-  $('#reset').addEventListener('click', () => resetDay(SHIFT_START));
   $('#modes').innerHTML = MODES.map((m) => `<button data-mode="${m.id}"></button>`).join('');
   $('#modes').addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]');
@@ -110,10 +112,8 @@ function buildChrome() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.target.closest('input, textarea')) return;
-    if (e.code === 'Space') { e.preventDefault(); setPlaying(!state.playing); }
     if (e.key === 'Escape') select(null);
   });
-  paintSpeed();
   paintLabels();
 }
 
@@ -127,7 +127,6 @@ function paintLabels() {
     if (prop === 'textContent' || prop === 'innerHTML') el[prop] = tx(es, en);
     else el.setAttribute(prop, tx(es, en));
   }
-  for (const b of document.querySelectorAll('#speed button')) b.title = tx(`${b.dataset.speed} min de turno por segundo`, `${b.dataset.speed} shift minutes per second`);
   for (const b of document.querySelectorAll('#modes button')) b.textContent = MODES.find((m) => m.id === b.dataset.mode).nombre;
   for (const b of document.querySelectorAll('#tabs .tab')) b.querySelector('.tab-name').textContent = TABS.find((t) => t.id === b.dataset.tab).nombre();
   for (const def of KPIS) {
@@ -141,7 +140,6 @@ function paintLabels() {
     b.classList.toggle('on', b.dataset.lang === lang);
     b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
   }
-  setPlaying(state.playing);
 }
 
 onLang(() => {
@@ -164,16 +162,6 @@ onLang(() => {
   }
   if (state.chatOpen) renderChat();
 });
-
-function paintSpeed() {
-  for (const b of document.querySelectorAll('#speed button')) b.classList.toggle('on', Number(b.dataset.speed) === state.speed);
-}
-
-function setPlaying(v) {
-  state.playing = v && !state.sim?.terminado;
-  $('#play').classList.toggle('paused', !state.playing);
-  $('#play').setAttribute('aria-label', state.playing ? tx('Pausar', 'Pause') : tx('Reanudar', 'Resume'));
-}
 
 function setMode(mode) {
   state.mode = mode;
@@ -208,7 +196,7 @@ function setTab(tab) {
 
 // ---------------------------------------------------------------------------- almacenes
 
-async function loadSite(id, at = START_AT) {
+async function loadSite(id, at = liveTarget().t) {
   const site = SITES.find((s) => s.id === id) || SITES[0];
   state.site = site;
   state.slotting = 'actual';
@@ -237,7 +225,6 @@ function resetDay(at = SHIFT_START, newSite = false) {
   scene.load(sim);
   scene.setMode(state.mode);
   $('#feed').innerHTML = '';
-  setPlaying(true);
   refreshAll();
   const ld = $('#loading');
   if (!ld.hidden) { ld.classList.add('done'); setTimeout(() => { ld.hidden = true; }, 450); }
@@ -524,7 +511,15 @@ function paintKpis() {
     spark(el.querySelector('svg'), sim.hourly, hist, def.id === 'calle' ? 'calle' : def.id);
   }
   $('#clock').textContent = fmt(Math.floor(sim.clock ?? sim.t));
-  $('#shift').textContent = sim.terminado ? tx('Turno terminado', 'Shift over') : `${tx('Turno', 'Shift')} 06:00–22:00 · ${state.site.nombre}`;
+  const live = liveTarget();
+  $('#live').classList.toggle('replay', live.replay);
+  $('#live-label').textContent = live.replay ? tx('EN DIFERIDO', 'REPLAY') : tx('EN VIVO', 'LIVE');
+  $('#live').title = live.replay
+    ? tx(`En España son las ${fmt(Math.floor(live.real))}: de noche el almacén no opera y se reproduce el turno de día.`, `It is ${fmt(Math.floor(live.real))} in Spain: the warehouse is closed at night, so the day shift is replayed.`)
+    : tx('Hora real de España: la simulación avanza minuto a minuto.', 'Real time in Spain: the simulation runs minute by minute.');
+  $('#shift').textContent = live.replay
+    ? `${tx('Turno de día en diferido', 'Day shift replay')} · ${state.site.nombre}`
+    : `${tx('Hora de España', 'Spain time')} · ${state.site.nombre}`;
 }
 
 function paintBanner() {
@@ -532,9 +527,7 @@ function paintBanner() {
   const el = $('#banner');
   const activas = sim.incidencias.filter((w) => w.empezo && !w.acabo);
   let html = '';
-  if (sim.terminado) {
-    html = tx('<b>Turno terminado.</b> Pulsa «Reiniciar» para volver a las 06:00 o cambia de almacén.', '<b>Shift over.</b> Press "Restart" to go back to 06:00 or switch warehouse.');
-  } else if (activas.length) {
+  if (activas.length) {
     const n = activas.length;
     const ids = activas.map((w) => w.f.id).join(', ');
     const h = fmt(Math.max(...activas.map((w) => w.hasta)));
@@ -588,9 +581,13 @@ let palAcc = 0;
 function frame(now) {
   const dt = Math.min(0.1, (now - prev) / 1000);
   prev = now;
-  if (state.playing && state.sim) {
-    state.sim.advance(dt * state.speed);
-    if (state.sim.terminado) setPlaying(false);
+  if (state.sim) {
+    // El almacén sigue al reloj real. Si el objetivo queda por detrás (de día a diferido a las
+    // 22:00, o de vuelta a las 06:00), se vuelve a simular el día hasta la hora que toca.
+    const target = liveTarget().t;
+    const now = state.sim.clock ?? state.sim.t;
+    if (target < now - 1) resetDay(target);
+    else if (target > now) state.sim.advance(Math.min(target - now, 30));
   }
   scene.update(dt);
   scene.render();

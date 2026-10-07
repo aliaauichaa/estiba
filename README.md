@@ -57,7 +57,9 @@ npm run build      # genera dist/
 node scripts/probar-dia.mjs 5   # indicadores de 5 días por almacén, para calibrar
 ```
 
-Atajos: espacio pausa, Esc quita la selección.
+**En vivo:** el reloj del almacén es la hora real de España y la simulación avanza minuto a minuto, como un
+panel de operaciones de verdad. El turno es de 06:00 a 22:00; de noche se reproduce el turno de día en diferido
+(con el aviso «EN DIFERIDO») para que siempre haya actividad. Esc quita la selección.
 
 ## Asistente con Bedrock (opcional)
 
@@ -84,6 +86,8 @@ to routes leaving on time, and every forklift, truck and pallet on screen comes 
 
 [![Estiba: 3D warehouse with shift KPIs, forklifts in the workshop and the AI assistant](docs/captura-en.png)](https://d1ex3zlctjya5a.cloudfront.net/?lang=en)
 
+- **Live:** the warehouse clock is real Spain time and the simulation runs minute by minute, like a real operations
+  dashboard. The shift runs 06:00–22:00; at night the day shift is replayed (marked "REPLAY").
 - **Three fictional warehouses** (Zaragoza, Madrid, Barcelona), each with its own issue: two forklifts in the
   workshop, a healthy baseline, and a nearly full building with old slotting.
 - **End-to-end flow:** yard → dock → receiving lane → put-away → stock available → wave release → picking → route departure.

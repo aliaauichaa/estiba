@@ -26,14 +26,9 @@
         <span class="brand-text"><b>Estiba</b><small>Gemelo digital de almacén</small></span>
       </a>
       <nav class="sites" id="sites" aria-label="Almacenes"></nav>
-      <div class="clock" aria-label="Control de la simulación">
-        <button class="icon-btn" id="play" aria-label="Pausar">
-          <svg viewBox="0 0 24 24" class="i-pause"><path d="M7 5h3v14H7zM14 5h3v14h-3z" /></svg>
-          <svg viewBox="0 0 24 24" class="i-play"><path d="M8 5v14l11-7z" /></svg>
-        </button>
+      <div class="clock">
+        <span class="live" id="live"><i aria-hidden="true"></i><b id="live-label">EN VIVO</b></span>
         <div class="time"><span id="clock">--:--</span><small id="shift">Turno 06:00–22:00</small></div>
-        <div class="speed" id="speed" role="group" aria-label="Velocidad"></div>
-        <button class="ghost-btn" id="reset" title="Volver a empezar el día">Reiniciar</button>
         <div class="lang" id="lang" role="group" aria-label="Idioma / Language">
           <button type="button" data-lang="es" lang="es">ES</button>
           <button type="button" data-lang="en" lang="en">EN</button>
