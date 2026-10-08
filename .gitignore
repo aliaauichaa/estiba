@@ -1,3 +1,6 @@
 node_modules/
 dist/
 *.zip
+
+# Ficha profesional del autor: se copia desde fuera del repositorio con sincronizar.mjs (no se publica).
+lambda/asistente/ficha-ali.mjs
