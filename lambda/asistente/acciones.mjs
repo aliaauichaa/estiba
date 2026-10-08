@@ -2,7 +2,10 @@
 // lista cerrada del diagnóstico (por id); si la explicación aconseja algo por su cuenta, se rechaza.
 // Es una heurística deliberadamente estricta: un falso positivo solo cuesta un reintento.
 
-const norm = (s) => String(s).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+// Sin tildes con una tabla explícita, sin depender de String.normalize (mismo criterio que ruta.mjs).
+const TILDES = { á: 'a', à: 'a', â: 'a', ä: 'a', é: 'e', è: 'e', ê: 'e', ë: 'e', í: 'i', ì: 'i', î: 'i', ï: 'i',
+  ó: 'o', ò: 'o', ô: 'o', ö: 'o', ú: 'u', ù: 'u', û: 'u', ü: 'u', ñ: 'n', ç: 'c' };
+const norm = (s) => String(s).toLowerCase().replace(/[áàâäéèêëíìîïóòôöúùûüñç]/g, (c) => TILDES[c]);
 
 // Expresiones de consejo en cualquier punto de la frase.
 const CONSEJO = [

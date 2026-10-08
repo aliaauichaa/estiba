@@ -4,8 +4,9 @@ import { Simulation, SHIFT_START, SHIFT_END, fmt, runDay } from './sim/engine.js
 import { WarehouseScene, MODES } from './scene/warehouse3d.js';
 import { computeHistory, baselineAt } from './analysis/history.js';
 import { analyzeSlotting } from './analysis/optimize.js';
-import { answerLocal, diagnose, sugerencias } from './analysis/assistant.js';
+import { answerLocal, diagnose, sugerencias, contextoDeRuta } from './analysis/assistant.js';
 import { API_URL, answerRemote } from './analysis/remote.js';
+import { esPreguntaSobreAli } from '../lambda/asistente/ruta.mjs';
 import { ShiftChart, chartLegend } from './ui/chart.js';
 import { tx, lang, setLang, onLang, pct, num, ppUnit } from './i18n.js';
 import { renderOverview, renderSelection, renderRoutes, renderOpt, riskCount } from './ui/panels.js';
@@ -350,8 +351,8 @@ function renderChat() {
   $('#ai-sub').textContent = `${state.site.nombre} · ${API_URL ? tx('Claude en Amazon Bedrock', 'Claude on Amazon Bedrock') : tx('datos del turno en directo', 'live shift data')}`;
   const box = $('#ai-msgs');
   const welcome = () => tx(
-    `Hola. Tengo delante el turno de **${state.site.nombre}** en tiempo real y los 14 días anteriores para comparar. Pregúntame lo que necesites.`,
-    `Hi. I am looking at the **${state.site.nombre}** shift in real time, with the previous 14 days to compare against. Ask me anything.`,
+    `Hola. Tengo delante el turno de **${state.site.nombre}** en tiempo real y los 14 días anteriores para comparar. Pregúntame lo que necesites. También puedo contarte quién ha creado Estiba.`,
+    `Hi. I am looking at the **${state.site.nombre}** shift in real time, with the previous 14 days to compare against. Ask me anything. I can also tell you who built Estiba.`,
   );
   box.innerHTML = log.map((m) => `<div class="msg ${m.who}">${m.who === 'bot' ? md(m.welcome ? welcome() : m.text) : esc(m.text)}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`).join('')
     + (log.pending ? '<div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div>' : '');
@@ -442,17 +443,29 @@ async function ask(q) {
   renderChat();
   const c = ctx();
   const hora = fmt(c.sim.t);
-  const local = answerLocal(q, c);
+  const hist = log.filter((m) => m.who && !m.welcome).slice(-7, -1).map((m) => ({ rol: m.who === 'user' ? 'usuario' : 'asistente', texto: m.text }));
+  // Sin Lambda (o si falla), la respuesta local decide sola con el hilo y las rutas del simulador.
+  const local = answerLocal(q, c, { historial: hist });
+  const localEsDeAli = esPreguntaSobreAli(q, hist, contextoDeRuta(c.sim));
+  const calculado = tx(`Calculado con los datos del turno a las ${hora}`, `Computed from the shift data at ${hora}`);
   let text = local;
-  let src = tx(`Calculado con los datos del turno a las ${hora}`, `Computed from the shift data at ${hora}`);
+  // Las preguntas sobre Ali no salen de los datos del turno: sin etiqueta de «calculado con…».
+  let src = localEsDeAli ? '' : calculado;
   if (API_URL) {
     try {
-      const hist = log.filter((m) => m.who && !m.welcome).slice(-7, -1).map((m) => ({ rol: m.who === 'user' ? 'usuario' : 'asistente', texto: m.text }));
       const r = await answerRemote(q, c, local, hist);
-      // Si la Lambda descartó la redacción del modelo, se enseña la respuesta local completa.
-      text = r.fuente === 'modelo' ? r.texto : local;
-      // Si la Lambda descartó la redacción del modelo (cifras que no estaban en los datos), llega la base.
-      if (r.fuente === 'modelo') src = tx(`Redactado por Claude (Amazon Bedrock) con el diagnóstico de las ${hora}`, `Written by Claude (Amazon Bedrock) from the ${hora} diagnosis`);
+      // Manda el tema que decidió la Lambda. Si es del turno y descartó la redacción del modelo, llega la
+      // respuesta base (calculada sin hilo): se enseña la local del turno, no la presentación de Ali.
+      if (r.tema === 'ali') {
+        text = r.texto;
+        src = tx('Redactado por Claude (Amazon Bedrock) con la ficha de Ali', "Written by Claude (Amazon Bedrock) from Ali's profile");
+      } else if (r.fuente === 'modelo') {
+        text = r.texto;
+        src = tx(`Redactado por Claude (Amazon Bedrock) con el diagnóstico de las ${hora}`, `Written by Claude (Amazon Bedrock) from the ${hora} diagnosis`);
+      } else {
+        text = localEsDeAli ? answerLocal(q, c) : local;
+        src = calculado;
+      }
     } catch {
       text = local;
     }

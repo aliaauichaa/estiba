@@ -13,7 +13,8 @@ Set-Location $PSScriptRoot
 
 if ($Lambda) {
   if (Test-Path asistente.zip) { Remove-Item asistente.zip }
-  Compress-Archive -Path lambda/asistente/index.mjs, lambda/asistente/cifras.mjs, lambda/asistente/acciones.mjs -DestinationPath asistente.zip -Force
+  # ficha-ali.mjs es copia de Proyecto IA/ficha-ali (node sincronizar.mjs): preguntas sobre Ali (ali.mjs, ruta.mjs).
+  Compress-Archive -Path lambda/asistente/index.mjs, lambda/asistente/cifras.mjs, lambda/asistente/acciones.mjs, lambda/asistente/ruta.mjs, lambda/asistente/ali.mjs, lambda/asistente/ficha-ali.mjs -DestinationPath asistente.zip -Force
   aws lambda update-function-code --region $Region --function-name estiba-asistente --zip-file fileb://asistente.zip --query "[FunctionName,LastUpdateStatus]" --output text
   aws lambda wait function-updated --region $Region --function-name estiba-asistente
   Remove-Item asistente.zip

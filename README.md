@@ -30,7 +30,9 @@ y los indicadores se calculan sobre lo que ocurre en él.
   cambios de ubicación de más impacto y permite re-simular el día con el slotting propuesto.
 - **Asistente:** responde a preguntas como «¿por qué baja el OTIF?», «¿qué rutas están en riesgo?» o «¿qué hago ahora?»
   recorriendo la cadena de causas. Va en una burbuja flotante; el diagnóstico se calcula en el navegador y Claude
-  (Amazon Bedrock) redacta la respuesta a partir de él (`lambda/asistente`).
+  (Amazon Bedrock) redacta la respuesta a partir de él (`lambda/asistente`). Las preguntas sobre quién ha hecho
+  Estiba o sobre su autor las contesta con su ficha profesional, con datos verificados y su LinkedIn
+  (`lambda/asistente/ruta.mjs` decide a qué parte va cada pregunta; lo dudoso lo resuelve el modelo).
 
 ## Cómo está hecho
 
@@ -63,8 +65,10 @@ panel de operaciones de verdad. El turno es de 06:00 a 22:00; de noche se reprod
 
 ## Asistente con Bedrock (opcional)
 
-1. Crear una Lambda (Node.js 22) con `lambda/asistente/index.mjs`, permiso `bedrock:InvokeModel` sobre el modelo
-   y una Function URL con CORS limitado al dominio de la web. Variable opcional: `TOPE_DIARIO`.
+1. Crear una Lambda (Node.js 22) con los `.mjs` de `lambda/asistente` (`index.mjs` es el manejador; `deploy.ps1 -Lambda`
+   los empaqueta), permiso `bedrock:InvokeModel` sobre el modelo y una Function URL con CORS limitado al dominio de la
+   web. Variables opcionales: `TOPE_DIARIO` (preguntas del turno) y `TOPE_ALI` (preguntas sobre el autor).
+   `ficha-ali.mjs` es la ficha del autor que comparten sus otros chats y se copia desde fuera del repositorio.
 2. Compilar la web con la URL: `VITE_ESTIBA_API=https://…lambda-url…/ npm run build`.
 
 Sin esa variable, el asistente responde solo con el motor local.
@@ -98,7 +102,8 @@ to routes leaving on time, and every forklift, truck and pallet on screen comes 
   relocations, and a full re-simulation of the day with the proposed slotting.
 - **AI assistant** (floating bubble): answers "why is OTIF dropping?", "which routes are at risk?" or "what should I do now?"
   by walking the chain of causes. The diagnosis is computed in the browser; Claude on Amazon Bedrock writes the answer
-  from it, in the interface language.
+  from it, in the interface language. Questions about who built Estiba, or about its author, are answered from his
+  professional profile with verified facts and his LinkedIn.
 
 Built with Vite + Three.js + plain JavaScript; deployed on S3 + CloudFront (OAC) with a Lambda Function URL for the
 assistant. `npm install`, `npm run dev`, `npm test`. All data is simulated.

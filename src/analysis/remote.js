@@ -46,7 +46,8 @@ export async function answerRemote(question, ctx, local, historial = []) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (!data.texto) throw new Error('sin texto');
-    return { texto: data.texto, fuente: data.fuente || 'modelo' };
+    // tema 'ali': la Lambda contestó con la ficha de Ali (lambda/asistente/ruta.mjs), no con el turno.
+    return { texto: data.texto, fuente: data.fuente || 'modelo', tema: data.tema || 'turno' };
   } finally {
     clearTimeout(timer);
   }

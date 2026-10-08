@@ -8,21 +8,33 @@
 //    se cuela con recomendaciones propias (acciones.mjs), se le pide que la rehaga.
 // Si después del reintento sigue fallando, se devuelve la respuesta base calculada en el navegador.
 //
+// Preguntas sobre Ali (el creador) o sobre qué es Estiba (ruta.mjs): no pasan por lo anterior. Se
+// responden con la misma ficha que los chats públicos de Mi Campo y Quillaflow (ali.mjs + ficha-ali.mjs):
+// datos verificados con la herramienta responder_con_datos y el mismo postproceso.
+//
 // Variables de entorno:
 //   (El CORS lo pone la Function URL; si la Lambda también lo pusiera, la cabecera saldría duplicada.)
 //   BEDROCK_REGION   por defecto us-east-1
 //   MODELO           por defecto us.anthropic.claude-haiku-4-5-20251001-v1:0
-//   TOPE_DIARIO      llamadas por día y contenedor (protección básica de coste, por defecto 300)
+//   TOPE_DIARIO      llamadas de operaciones por día y contenedor (protección básica de coste, por defecto 300)
+//   TOPE_ALI         llamadas sobre Ali por día y contenedor, reescrituras incluidas (prompt de ~10.000 tokens;
+//                    por defecto 40: con 3 contenedores, unas 120 al día, ~2 $ en el peor caso)
 
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { permitidas, cifrasInventadas } from './cifras.mjs';
 import { recomendaciones } from './acciones.mjs';
+import { clasificar, esPreguntaSobreAli } from './ruta.mjs';
+import { mensajesDe, responderSobreAli, temaDe } from './ali.mjs';
 
-const bedrock = new BedrockRuntimeClient({ region: process.env.BEDROCK_REGION || 'us-east-1', maxAttempts: 1 });
+// Un reintento con espera: la cuota de Haiku de la cuenta (10 peticiones/min entre regiones) es compartida
+// con el chat de Mi Campo, y con maxAttempts 1 cualquier limitación era un 502 al momento.
+const bedrock = new BedrockRuntimeClient({ region: process.env.BEDROCK_REGION || 'us-east-1', maxAttempts: 2 });
 const MODELO = process.env.MODELO || 'us.anthropic.claude-haiku-4-5-20251001-v1:0';
 const TOPE = Number(process.env.TOPE_DIARIO || 300);
+const TOPE_ALI = Number(process.env.TOPE_ALI || 40);
 let dia = '';
 let usadas = 0;
+let usadasAli = 0;
 
 const SISTEMA = `Eres el asistente de operaciones de Estiba, un gemelo digital de almacén. Respondes a un jefe de turno usando la herramienta «responder».
 - Idioma: el que indique <idioma> ("es" = español de España, "en" = inglés británico), aunque la pregunta venga en otro. Los datos pueden venir en el otro idioma: tradúcelos tú.
@@ -66,8 +78,7 @@ export async function handler(event) {
   if (method !== 'POST') return reply(405, { error: 'método no permitido' });
 
   const hoy = new Date().toISOString().slice(0, 10);
-  if (hoy !== dia) { dia = hoy; usadas = 0; }
-  if (usadas >= TOPE) return reply(429, { error: 'tope diario alcanzado' });
+  if (hoy !== dia) { dia = hoy; usadas = 0; usadasAli = 0; }
 
   let input;
   try {
@@ -77,31 +88,42 @@ export async function handler(event) {
   } catch {
     return reply(400, { error: 'JSON no válido' });
   }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return reply(400, { error: 'JSON no válido' });
   const pregunta = String(input.pregunta || '').slice(0, 300).trim();
   const idioma = input.idioma === 'en' ? 'en' : 'es';
   if (!pregunta) return reply(400, { error: 'falta la pregunta' });
-  const contexto = input.contexto ?? {};
+
+  // ¿Ficha de Ali o turno? Lo claro lo decide ruta.mjs; lo dudoso, una llamada mínima al modelo (cuenta en
+  // el tope del turno; si está agotado, decide el hilo de la conversación).
+  const historial = Array.isArray(input.historial) ? input.historial : [];
+  let tema = clasificar(pregunta, historial, input.contexto);
+  if (tema === 'dudosa') {
+    if (usadas < TOPE) { usadas++; tema = await temaDe(pregunta, historial, invocarBedrock, input.contexto); }
+    else tema = esPreguntaSobreAli(pregunta, historial, input.contexto) ? 'ali' : 'turno';
+  }
+
+  if (tema === 'ali') {
+    if (usadasAli >= TOPE_ALI) return reply(429, { error: 'tope diario alcanzado' });
+    usadasAli++;
+    try {
+      const texto = await responderSobreAli({ pregunta, idioma, historial }, invocarBedrock, { alReescribir: () => { usadasAli++; } });
+      return reply(200, { texto, fuente: 'modelo', tema: 'ali' });
+    } catch (e) {
+      console.error('bedrock (ali)', e.name, e.message);
+      return reply(502, { error: 'el modelo no respondió' });
+    }
+  }
+
+  if (usadas >= TOPE) return reply(429, { error: 'tope diario alcanzado' });
+  const contexto = input.contexto && typeof input.contexto === 'object' ? input.contexto : {};
   const acciones = Array.isArray(contexto.acciones)
     ? contexto.acciones.filter((a) => a && typeof a.id === 'string' && typeof a.texto === 'string').slice(0, 8)
     : [];
   const porId = new Map(acciones.map((a) => [a.id, a]));
 
-  const historial = Array.isArray(input.historial) ? input.historial.slice(-6) : [];
-  const mensajes = [];
-  for (const h of historial) {
-    const role = h.rol === 'usuario' ? 'user' : 'assistant';
-    const texto = String(h.texto || '').slice(0, 1500);
-    if (!texto) continue;
-    if (mensajes.length && mensajes[mensajes.length - 1].role === role) mensajes[mensajes.length - 1].content += `\n${texto}`;
-    else mensajes.push({ role, content: texto });
-  }
-  while (mensajes.length && mensajes[0].role !== 'user') mensajes.shift();
-  if (mensajes.length && mensajes[mensajes.length - 1].role === 'user') mensajes.pop();
   const base = String(input.respuestaBase || '').slice(0, 4000);
-  mensajes.push({
-    role: 'user',
-    content: `<idioma>${idioma}</idioma>\n<datos>${JSON.stringify(contexto)}</datos>\n<respuesta_base>${base}</respuesta_base>\n\nPregunta: ${pregunta}`,
-  });
+  const mensajes = mensajesDe(input.historial,
+    `<idioma>${idioma}</idioma>\n<datos>${JSON.stringify(contexto)}</datos>\n<respuesta_base>${base}</respuesta_base>\n\nPregunta: ${pregunta}`);
 
   usadas++;
   const permit = permitidas(contexto, base, pregunta);
@@ -134,17 +156,25 @@ export async function handler(event) {
     }
     if (fallos.length || !r.explicacion) {
       console.warn('respuesta rechazada (2.º intento): se usa la respuesta base:', fallos.join(' | '));
-      return reply(200, { texto: base, fuente: 'base' });
+      return reply(200, { texto: base, fuente: 'base', tema: 'turno' });
     }
     const elegidas = [...new Set(r.acciones)].map((id) => porId.get(id));
     const texto = elegidas.length
       ? `${r.explicacion}\n\n**${idioma === 'en' ? 'What to do' : 'Qué hacer'}:**\n${elegidas.map((a) => `- **${a.titulo}:** ${a.texto}`).join('\n')}`
       : r.explicacion;
-    return reply(200, { texto, fuente: 'modelo' });
+    return reply(200, { texto, fuente: 'modelo', tema: 'turno' });
   } catch (e) {
     console.error('bedrock', e.name, e.message);
     return reply(502, { error: 'el modelo no respondió' });
   }
+}
+
+async function invocarBedrock(body) {
+  const out = await bedrock.send(new InvokeModelCommand({
+    modelId: MODELO, contentType: 'application/json', accept: 'application/json',
+    body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', ...body }),
+  }));
+  return JSON.parse(new TextDecoder().decode(out.body));
 }
 
 async function llamar(messages, tool) {

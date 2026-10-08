@@ -7,6 +7,7 @@
 import { baselineAt } from './history.js';
 import { fmt } from '../sim/engine.js';
 import { tx, num, pct, ppUnit, placeName } from '../i18n.js';
+import { esPreguntaSobreAli } from '../../lambda/asistente/ruta.mjs';
 
 export { num, pct };
 const n1 = (v) => num(v, 1);
@@ -176,8 +177,18 @@ const INTENTS = [
 
 export function sugerencias() {
   return tx(
-    ['¿Cómo va el turno?', '¿Por qué baja el OTIF hoy?', '¿Qué rutas están en riesgo?', '¿Qué hago ahora mismo?', '¿Cuánto ahorraría con slotting ABC?', 'Compara los tres almacenes'],
-    ['How is the shift going?', 'Why is OTIF dropping today?', 'Which routes are at risk?', 'What should I do right now?', 'How much would ABC slotting save?', 'Compare the three warehouses'],
+    ['¿Cómo va el turno?', '¿Por qué baja el OTIF hoy?', '¿Qué rutas están en riesgo?', '¿Qué hago ahora mismo?', '¿Cuánto ahorraría con slotting ABC?', 'Compara los tres almacenes', '¿Quién ha creado Estiba?'],
+    ['How is the shift going?', 'Why is OTIF dropping today?', 'Which routes are at risk?', 'What should I do right now?', 'How much would ABC slotting save?', 'Compare the three warehouses', 'Who built Estiba?'],
+  );
+}
+
+// Sin la Lambda (desarrollo local, o si falla) no hay ficha de Ali en el navegador: presentación fija,
+// con los mismos datos que la ficha (Proyecto IA/ficha-ali), y su LinkedIn.
+const LINKEDIN_ALI = 'https://www.linkedin.com/in/ali-aauicha/';
+function sobreAli() {
+  return tx(
+    `**Estiba** la ha creado **Ali Aauicha Azghouli** como demo de portafolio, con datos simulados. Ali trabajó unos cinco años en operaciones y cadena de suministro (Fluiconnecto, Paack y Grupo Sesé) y desde 2026 es desarrollador Cloud e IA, con tres productos propios en producción sobre AWS: Quillaflow, Mi Campo con IA y ShootingStats.\n\nAhora mismo no puedo consultar su ficha completa para darte más detalle.\n\nMás sobre Ali: ${LINKEDIN_ALI}`,
+    `**Estiba** was built by **Ali Aauicha Azghouli** as a portfolio demo with simulated data. Ali spent about five years in operations and supply chain (Fluiconnecto, Paack and Grupo Sesé) and since 2026 has been a Cloud & AI developer with three products of his own in production on AWS: Quillaflow, Mi Campo con IA and ShootingStats.\n\nI can't look up his full profile right now to give you more detail.\n\nMore about Ali: ${LINKEDIN_ALI}`,
   );
 }
 
@@ -185,21 +196,27 @@ export function sugerencias() {
 // le llegan aparte como lista cerrada y no debe reescribirlas).
 let SIN_ACCIONES = false;
 
-export function answerLocal(question, ctx, { sinAcciones = false } = {}) {
+// historial: el mismo que usan la etiqueta de main.js y la Lambda para decidir si la pregunta es sobre Ali.
+export function answerLocal(question, ctx, { sinAcciones = false, historial = [] } = {}) {
   SIN_ACCIONES = sinAcciones;
   try {
-    return responder(question, ctx);
+    return responder(question, ctx, historial);
   } finally {
     SIN_ACCIONES = false;
   }
 }
 
-function responder(question, ctx) {
+// Almacén y destinos del turno, con la misma forma que el contexto que recibe la Lambda (ruta.mjs).
+export function contextoDeRuta(sim) {
+  return { almacen: sim.site.nombre, rutas: sim.routes.map((r) => ({ destino: placeName(r.destino) })) };
+}
+
+function responder(question, ctx, historial = []) {
   const q = norm(question);
   const { sim } = ctx;
-  const d = diagnose(sim, ctx.history);
 
-  // Menciones directas: una ruta o una referencia concreta.
+  // Menciones directas: una ruta o una referencia concreta. Van antes que el hilo de una conversación
+  // sobre Ali: «¿Y lo de Huesca?» tras hablar de él es del turno.
   const siteName = norm(sim.site.nombre);
   const ruta = sim.routes.find((r) => {
     const names = [norm(r.destino), norm(placeName(r.destino))];
@@ -208,6 +225,9 @@ function responder(question, ctx) {
       return q.includes(full) || (first !== siteName && q.includes(first));
     });
   });
+  const sobre = !ruta && !/[a-z]{3}-\d{4}/.test(q) && esPreguntaSobreAli(question, historial, contextoDeRuta(sim));
+  if (sobre) return sobreAli();
+  const d = diagnose(sim, ctx.history);
   if (ruta && !/compar/.test(q)) return rutaDetalle(d, ruta, sim);
   const code = q.match(/[a-z]{3}-\d{4}/);
   if (code) {

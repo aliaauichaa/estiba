@@ -167,6 +167,7 @@ table.t tr.click:hover td { background: var(--panel-2); }
 .msg.bot ul { margin: 4px 0 6px; padding-left: 18px; }
 .msg.bot li { margin-bottom: 3px; }
 .msg.bot b { color: var(--amber); font-weight: 600; }
+.msg.bot a { color: var(--amber); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 .msg .src { margin-top: 6px; font-size: 10.5px; color: var(--dim); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { border: 1px solid var(--line-2); background: transparent; border-radius: 999px; padding: 5px 10px; font-size: 12px; cursor: pointer; color: var(--muted); text-align: left; }
