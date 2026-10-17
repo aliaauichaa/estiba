@@ -7,7 +7,7 @@
 import { baselineAt } from './history.js';
 import { fmt } from '../sim/engine.js';
 import { tx, num, pct, ppUnit, placeName } from '../i18n.js';
-import { esPreguntaSobreAli } from '../../lambda/asistente/ruta.mjs';
+import { esPreguntaSobreAli, clasificar } from '../../lambda/asistente/ruta.mjs';
 
 export { num, pct };
 const n1 = (v) => num(v, 1);
@@ -17,11 +17,16 @@ const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const plural = (n, es1, esN, en1, enN) => tx(n === 1 ? es1 : esN, n === 1 ? en1 : enN);
 const forklifts = (n) => plural(n, 'carretilla', 'carretillas', 'forklift', 'forklifts');
 const route = (ro) => placeName(ro.destino);
+// Título dentro de una frase: minúscula solo la primera letra (los nombres propios se quedan como están).
+const minus = (t) => t.charAt(0).toLowerCase() + t.slice(1);
+
 
 // ---------------------------------------------------------------------------- diagnóstico
 
 export function routeStatus(sim) {
-  const avgMin = sim.c.pedidosPreparados ? sim.c.minutosPicking / sim.c.pedidosPreparados : 9;
+  // minutosPicking se suma al EMPEZAR cada picking: se divide entre los pedidos empezados, no solo los terminados.
+  const empezados = sim.c.pedidosPreparados + sim.orders.filter((o) => o.estado === 'en_curso').length;
+  const avgMin = empezados ? sim.c.minutosPicking / empezados : 9;
   // Minutos-equipo disponibles desde ahora hasta T, descontando las carretillas en el taller
   // y reservando un 20 % para ubicar palés de recepción.
   const capacidad = (T) => 0.8 * sim.forklifts.reduce((s, f) => {
@@ -63,13 +68,16 @@ export function diagnose(sim, history) {
     const minutos = inc.reduce((s, w) => s + Math.max(0, Math.min(sim.t, w.hasta) - w.desde), 0);
     const activas = inc.filter((w) => !w.acabo);
     const desde = Math.min(...inc.map((w) => w.desde));
-    const eqHoy = mean(sim.hourly.filter((h) => h.hora >= Math.floor(desde / 60)).map((h) => h.equipos));
+    // Media de carretillas operativas desde la avería, con los minutos perdidos (no con las filas horarias).
+    const eqHoy = sim.t - desde >= 5 ? sim.forklifts.length - minutos / (sim.t - desde) : null;
     const ids = inc.map((w) => w.f.id).join(', ');
     const vuelta = activas.length ? fmt(Math.max(...activas.map((w) => w.hasta))) : null;
     out.push({
       id: 'taller',
-      peso: 3 + minutos / 120,
-      titulo: tx(`${inc.length} ${forklifts(inc.length)} en el taller`, `${inc.length} ${forklifts(inc.length)} in the workshop`),
+      peso: activas.length ? 3 + minutos / 120 : 1.2 + Math.min(0.6, minutos / 600),
+      titulo: activas.length
+        ? tx(`${activas.length} ${forklifts(activas.length)} en el taller`, `${activas.length} ${forklifts(activas.length)} in the workshop`)
+        : tx(`${inc.length} ${forklifts(inc.length)} pasaron por el taller`, `${inc.length} ${forklifts(inc.length)} went through the workshop`),
       detalle: tx(
         `${ids} salieron de servicio desde las ${fmt(desde)} (${inc[0].motivo}). Se han perdido unas **${n1(minutos / 60)} horas-equipo**${eqHoy ? `; desde entonces trabajan de media ${n1(eqHoy)} de ${sim.forklifts.length}` : ''}.${activas.length ? ` Siguen fuera ${activas.length}, vuelven hacia las ${vuelta}.` : ' Ya están todas de vuelta.'}`,
         `${ids} went out of service from ${fmt(desde)} (${inc[0].motivo}). About **${n1(minutos / 60)} equipment-hours** have been lost${eqHoy ? `; since then an average of ${n1(eqHoy)} of ${sim.forklifts.length} have been working` : ''}.${activas.length ? ` ${activas.length} still out, back around ${vuelta}.` : ' All of them are back now.'}`,
@@ -77,8 +85,11 @@ export function diagnose(sim, history) {
       accion: activas.length
         ? tx('Pedir una carretilla de alquiler o de otro turno para las horas que quedan, y retrasar la ubicación de palés no urgentes para que los equipos que quedan se centren en las rutas que salen antes.',
           'Bring in a rental forklift or one from another shift for the remaining hours, and hold back non-urgent put-away so the remaining trucks focus on the routes leaving first.')
-        : tx('Recuperar el retraso: priorizar las rutas con pedidos pendientes y vaciar las calles de recepción en cuanto haya margen.',
-          'Catch up: prioritise routes with pending orders and clear the receiving lanes as soon as there is slack.'),
+        : sim.routes.every((r) => r.salio)
+          ? tx('Programar las revisiones de las carretillas fuera del pico de picking (antes de las 07:00 o después de la última ruta).',
+            'Schedule forklift servicing outside the picking peak (before 07:00 or after the last route).')
+          : tx('Recuperar el retraso: priorizar las rutas con pedidos pendientes y vaciar las calles de recepción en cuanto haya margen.',
+            'Catch up: prioritise routes with pending orders and clear the receiving lanes as soon as there is slack.'),
     });
   }
 
@@ -92,8 +103,11 @@ export function diagnose(sim, history) {
         `La utilización de las carretillas es del **${pct(k.utilizacion)}** frente al ${pct(b.utilizacion)} habitual a esta hora. Por encima del 80–85 % cualquier pico se convierte en cola.`,
         `Forklift utilisation is **${pct(k.utilizacion)}** against the usual ${pct(b.utilizacion)} at this time. Above 80–85%, any peak turns into a queue.`,
       ),
-      accion: tx('Repartir la carga: adelantar la preparación de las rutas de la tarde en las horas valle y no programar descargas en la franja de más picking.',
-        'Spread the load: pick the afternoon routes early during quiet hours and avoid booking deliveries in the busiest picking window.'),
+      accion: !sim.routes.some((r) => !r.salio && r.salida - sim.t > 120)
+        ? tx('Revisar la planificación de mañana: repartir las descargas y la preparación para no concentrarlas en la franja de más picking.',
+          'Review tomorrow\'s plan: spread deliveries and picking so they do not pile up in the busiest picking window.')
+        : tx('Repartir la carga: adelantar la preparación de las rutas de la tarde en las horas valle y no programar descargas en la franja de más picking.',
+          'Spread the load: pick the afternoon routes early during quiet hours and avoid booking deliveries in the busiest picking window.'),
     });
   }
 
@@ -102,16 +116,20 @@ export function diagnose(sim, history) {
   const bloqBase = b?.bloqueo ?? 0;
   if ((k.dts != null && b?.dts != null && k.dts > b.dts * 1.6 && k.dts - b.dts > 15) || bloq - bloqBase > 60) {
     const parados = sim.trucks.filter((tr) => tr.bloqueo > 5).length;
+    const vacia = k.calle === 0 && !sim.yard.length && !sim.L.inDocks.some((dk) => dk.truck);
     out.push({
       id: 'recepcion',
-      peso: 2 + Math.min(4, (bloq - bloqBase) / 150),
-      titulo: tx('Recepción atascada', 'Receiving is jammed'),
+      peso: vacia ? 1.2 + Math.min(0.6, (bloq - bloqBase) / 1500) : 2 + Math.min(4, (bloq - bloqBase) / 150),
+      titulo: vacia ? tx('La recepción estuvo atascada', 'Receiving was jammed earlier') : tx('Recepción atascada', 'Receiving is jammed'),
       detalle: tx(
-        `El dock-to-stock medio va en **${num(k.dts)} min** (lo normal a esta hora: ${num(b?.dts)} min). Las calles de recepción se han llenado y los camiones han estado **${num(bloq)} min parados** en muelle sin poder descargar${parados ? ` (${parados} camiones afectados)` : ''}. Ahora mismo hay ${k.calle} palés esperando ubicación.`,
-        `Average dock-to-stock is **${num(k.dts)} min** (normal at this time: ${num(b?.dts)} min). The receiving lanes filled up and trucks spent **${num(bloq)} min stopped** at the dock unable to unload${parados ? ` (${parados} trucks affected)` : ''}. Right now ${k.calle} pallets are waiting for put-away.`,
+        `El dock-to-stock medio va en **${num(k.dts)} min** (lo normal a esta hora: ${num(b?.dts)} min). Las calles de recepción se han llenado y los camiones han estado **${num(bloq)} min parados** en muelle sin poder descargar${parados ? ` (${parados} ${plural(parados, 'camión afectado', 'camiones afectados', '', '')})` : ''}. Ahora mismo hay ${k.calle} palés esperando ubicación.`,
+        `Average dock-to-stock is **${num(k.dts)} min** (normal at this time: ${num(b?.dts)} min). The receiving lanes filled up and trucks spent **${num(bloq)} min stopped** at the dock unable to unload${parados ? ` (${parados} ${plural(parados, '', '', 'truck affected', 'trucks affected')})` : ''}. Right now ${k.calle} pallets are waiting for put-away.`,
       ),
-      accion: tx('Ubicar primero los palés de referencias con pedidos pendientes y habilitar una zona de pulmón junto a los muelles para no parar la descarga.',
-        'Put away first the pallets of SKUs with pending orders, and open a buffer area next to the docks so unloading never stops.'),
+      accion: sim.routes.every((r) => r.salio) || (k.calle === 0 && !sim.yard.length && !sim.L.inDocks.some((dk) => dk.truck))
+        ? tx('Revisar las citas de descarga de mañana para que no coincidan con el pico de picking y dimensionar una zona de pulmón junto a los muelles.',
+          'Review tomorrow\'s unloading slots so they do not clash with the picking peak, and size a buffer area next to the docks.')
+        : tx('Ubicar primero los palés de referencias con pedidos pendientes y habilitar una zona de pulmón junto a los muelles para no parar la descarga.',
+          'Put away first the pallets of SKUs with pending orders, and open a buffer area next to the docks so unloading never stops.'),
     });
   }
 
@@ -163,7 +181,6 @@ function mean(arr) {
 
 // Las palabras clave valen en los dos idiomas, sea cual sea el de la interfaz.
 const INTENTS = [
-  { id: 'red', re: /(almacenes|\bred\b|compar|ranking|peor|mejor|otros|resto|warehouses|network|worst|best|other sites)/ },
   { id: 'acciones', re: /(que hago|que hacemos|recomiend|accion|plan|prioridad|solucion|arregl|mejorar|deberia|what should|what do i do|recommend|action|priorit|fix|improve)/ },
   { id: 'otif', re: /(otif|retras|tarde|a tiempo|puntual|por que|baja|cae|empeor|incumpl|late|on time|why|drop|falling|worse)/ },
   { id: 'rutas', re: /(ruta|salida|expedic|camion de salida|riesgo|llega|sale|route|dispatch|outbound|risk|depart)/ },
@@ -177,15 +194,15 @@ const INTENTS = [
 
 export function sugerencias() {
   return tx(
-    ['¿Cómo va el turno?', '¿Por qué baja el OTIF hoy?', '¿Qué rutas están en riesgo?', '¿Qué hago ahora mismo?', '¿Cuánto ahorraría con slotting ABC?', 'Compara los tres almacenes', '¿Quién ha creado Estiba?'],
-    ['How is the shift going?', 'Why is OTIF dropping today?', 'Which routes are at risk?', 'What should I do right now?', 'How much would ABC slotting save?', 'Compare the three warehouses', 'Who built Estiba?'],
+    ['¿Cómo va el turno?', '¿Por qué baja el OTIF hoy?', '¿Qué rutas están en riesgo?', '¿Qué hago ahora mismo?', '¿Cuánto ahorraría con slotting ABC?', '¿Quién ha creado Estiba?'],
+    ['How is the shift going?', 'Why is OTIF dropping today?', 'Which routes are at risk?', 'What should I do right now?', 'How much would ABC slotting save?', 'Who built Estiba?'],
   );
 }
 
 // Sin la Lambda (desarrollo local, o si falla) no hay ficha de Ali en el navegador: presentación fija,
 // con los mismos datos que la ficha (Proyecto IA/ficha-ali), y su LinkedIn.
 const LINKEDIN_ALI = 'https://www.linkedin.com/in/ali-aauicha/';
-function sobreAli() {
+export function sobreAli() {
   return tx(
     `**Estiba** la ha creado **Ali Aauicha Azghouli** como demo de portafolio, con datos simulados. Ali trabajó unos cinco años en operaciones y cadena de suministro (Fluiconnecto, Paack y Grupo Sesé) y desde 2026 es desarrollador Cloud e IA, con tres productos propios en producción sobre AWS: Quillaflow, Mi Campo con IA y ShootingStats.\n\nAhora mismo no puedo consultar su ficha completa para darte más detalle.\n\nMás sobre Ali: ${LINKEDIN_ALI}`,
     `**Estiba** was built by **Ali Aauicha Azghouli** as a portfolio demo with simulated data. Ali spent about five years in operations and supply chain (Fluiconnecto, Paack and Grupo Sesé) and since 2026 has been a Cloud & AI developer with three products of his own in production on AWS: Quillaflow, Mi Campo con IA and ShootingStats.\n\nI can't look up his full profile right now to give you more detail.\n\nMore about Ali: ${LINKEDIN_ALI}`,
@@ -225,10 +242,10 @@ function responder(question, ctx, historial = []) {
       return q.includes(full) || (first !== siteName && q.includes(first));
     });
   });
-  const sobre = !ruta && !/[a-z]{3}-\d{4}/.test(q) && esPreguntaSobreAli(question, historial, contextoDeRuta(sim));
+  const sobre = clasificar(question, historial, contextoDeRuta(sim)) === 'ali' || (!ruta && !/[a-z]{3}-\d{4}/.test(q) && esPreguntaSobreAli(question, historial, contextoDeRuta(sim)));
   if (sobre) return sobreAli();
   const d = diagnose(sim, ctx.history);
-  if (ruta && !/compar/.test(q)) return rutaDetalle(d, ruta, sim);
+  if (ruta) return rutaDetalle(d, ruta, sim);
   const code = q.match(/[a-z]{3}-\d{4}/);
   if (code) {
     const sku = sim.skus.find((s) => norm(s.code) === code[0]);
@@ -237,7 +254,6 @@ function responder(question, ctx, historial = []) {
 
   const intent = INTENTS.find((i) => i.re.test(q))?.id;
   switch (intent) {
-    case 'red': return red(ctx);
     case 'acciones': return acciones(d);
     case 'otif': return otif(d, sim);
     case 'rutas': return rutas(d);
@@ -249,8 +265,8 @@ function responder(question, ctx, historial = []) {
     case 'resumen': return resumen(d, sim);
     default:
       return tx(
-        `Puedo contestarte sobre **${sim.site.nombre}** con los datos del turno: OTIF y retrasos, rutas en riesgo, muelles y recepción, carretillas, ocupación, roturas de stock, slotting y comparación entre almacenes.\n\nPrueba con algo como «¿por qué baja el OTIF?» o «¿qué hago ahora mismo?».`,
-        `I can answer questions about **${sim.site.nombre}** using the shift data: OTIF and delays, routes at risk, docks and receiving, forklifts, occupancy, stockouts, slotting and comparisons between warehouses.\n\nTry something like "why is OTIF dropping?" or "what should I do right now?".`,
+        `Puedo contestarte sobre **${sim.site.nombre}** con los datos del turno: OTIF y retrasos, rutas en riesgo, muelles y recepción, carretillas, ocupación, roturas de stock y slotting.\n\nPrueba con algo como «¿por qué baja el OTIF?» o «¿qué hago ahora mismo?».`,
+        `I can answer questions about **${sim.site.nombre}** using the shift data: OTIF and delays, routes at risk, docks and receiving, forklifts, occupancy, stockouts and slotting.\n\nTry something like "why is OTIF dropping?" or "what should I do right now?".`,
       );
   }
 }
@@ -264,7 +280,10 @@ function linea(k, b, campo, nombre, fmtv, mejorAlto = true) {
     const diff = v - base;
     const malo = mejorAlto ? diff < 0 : diff > 0;
     const rel = Math.abs(diff) / (Math.abs(base) || 1);
-    comp = rel < 0.03
+    // Mismo criterio que las tarjetas: 0,5 p. p. en los porcentajes; un 5 % de la media en el resto.
+    const esPct = ['otif', 'fill', 'utilizacion', 'ocupacion'].includes(campo);
+    const igual = esPct ? Math.abs(diff * 100) < 0.5 : Math.abs(diff) < Math.max(1, Math.abs(base) * 0.05);
+    comp = igual
       ? tx(' (en línea con lo habitual)', ' (in line with normal)')
       : ` (${tx('habitual', 'usually')} ${fmtv(base)}${malo && rel > 0.1 ? tx(', **peor**', ', **worse**') : ''})`;
   }
@@ -274,8 +293,8 @@ function linea(k, b, campo, nombre, fmtv, mejorAlto = true) {
 function resumen(d, sim) {
   const { k, b, hallazgos } = d;
   const partes = [tx(
-    `**${sim.site.nombre} · ${d.hora}.** ${k.preparados} pedidos preparados, ${k.pendientes} pendientes y ${k.operativas}/${k.totalCarretillas} carretillas operativas.`,
-    `**${sim.site.nombre} · ${d.hora}.** ${k.preparados} orders picked, ${k.pendientes} pending and ${k.operativas}/${k.totalCarretillas} forklifts in service.`,
+    `**${sim.site.nombre} · ${d.hora}.** ${k.preparados} ${plural(k.preparados, 'pedido preparado', 'pedidos preparados', '', '')}, ${k.pendientes} ${plural(k.pendientes, 'pendiente', 'pendientes', '', '')} y ${k.operativas}/${k.totalCarretillas} carretillas operativas.`,
+    `**${sim.site.nombre} · ${d.hora}.** ${k.preparados} ${plural(k.preparados, '', '', 'order picked', 'orders picked')}, ${k.pendientes} pending and ${k.operativas}/${k.totalCarretillas} forklifts in service.`,
   )];
   partes.push([
     linea(k, b, 'otif', 'OTIF', (v) => pct(v)),
@@ -284,8 +303,12 @@ function resumen(d, sim) {
     linea(k, b, 'utilizacion', tx('Utilización de equipos', 'Equipment utilisation'), (v) => pct(v), false),
     linea(k, b, 'ocupacion', tx('Ocupación', 'Occupancy'), (v) => pct(v), false),
   ].join('\n'));
-  if (hallazgos.length) partes.push(`${tx('Lo más importante ahora', 'Most important right now')}: **${hallazgos[0].titulo.toLowerCase()}**. ${hallazgos[0].detalle}`);
-  else partes.push(tx('No veo desviaciones relevantes respecto a los 14 días anteriores.', 'I see no relevant deviations from the previous 14 days.'));
+  const riesgo = d.rutas.filter((r) => r.estado === 'riesgo');
+  if (hallazgos.length) partes.push(`${tx('Lo más importante ahora', 'Most important right now')}: **${minus(hallazgos[0].titulo)}**. ${hallazgos[0].detalle}`);
+  else if (riesgo.length) {
+    partes.push(tx(`Lo más importante ahora: **${riesgo.length} ${riesgo.length === 1 ? 'ruta en riesgo' : 'rutas en riesgo'}** (${riesgo.map((r) => `${route(r.ro)} ${fmt(r.ro.salida)}`).join(', ')}).`,
+      `Most important right now: **${riesgo.length} ${riesgo.length === 1 ? 'route at risk' : 'routes at risk'}** (${riesgo.map((r) => `${route(r.ro)} ${fmt(r.ro.salida)}`).join(', ')}).`));
+  } else partes.push(tx('No veo desviaciones relevantes respecto a los 14 días anteriores.', 'I see no relevant deviations from the previous 14 days.'));
   return partes.join('\n\n');
 }
 
@@ -310,9 +333,10 @@ function otif(d, sim) {
   const tarde = rs.filter((r) => r.estado === 'salio-tarde');
   if (tarde.length) partes.push(`${tx('Rutas que salieron incompletas', 'Routes that left short')}: ${tarde.map((r) => `${route(r.ro)} (${r.ro.expedidos}/${r.total})`).join(', ')}.`);
   const causas = hallazgos.filter((h) => ['taller', 'carga', 'recepcion', 'stock', 'capacidad'].includes(h.id));
+  const normal = dOt != null && dOt > -1.5;
   if (causas.length) {
-    partes.push(`**${tx('Por qué', 'Why')}:**\n${causas.map((h) => `- **${h.titulo}.** ${h.detalle}`).join('\n')}`);
-    if (causas.some((h) => h.id === 'taller') && causas.some((h) => h.id === 'recepcion')) {
+    partes.push(`**${normal ? tx('Aun así, hay incidencias que pueden afectar a las rutas que quedan', 'Even so, these incidents may affect the routes still to leave') : tx('Por qué', 'Why')}:**\n${causas.map((h) => `- **${h.titulo}.** ${h.detalle}`).join('\n')}`);
+    if (!normal && causas.some((h) => h.id === 'taller') && causas.some((h) => h.id === 'recepcion')) {
       partes.push(tx('La cadena es esta: con menos carretillas, el picking urgente se come la capacidad, los palés se acumulan en las calles de recepción, los camiones no pueden descargar y el stock tarda en llegar a su hueco.',
         'The chain is this: with fewer forklifts, urgent picking eats the capacity, pallets pile up in the receiving lanes, trucks cannot unload and stock takes longer to reach its location.'));
     }
@@ -454,8 +478,11 @@ export function accionesDisponibles(d) {
 
 function acciones(d) {
   if (SIN_ACCIONES) {
-    if (!d.hallazgos.length) return tx('Ahora mismo no hay nada urgente: el turno va en línea con lo habitual.', 'Nothing urgent right now: the shift is in line with normal.');
-    return `${tx('Situación', 'Situation')}:\n${d.hallazgos.map((h) => `- **${h.titulo}.** ${h.detalle}`).join('\n')}`;
+    const riesgo = d.rutas.filter((r) => r.estado === 'riesgo');
+    if (!d.hallazgos.length && !riesgo.length) return tx('Ahora mismo no hay nada urgente: el turno va en línea con lo habitual.', 'Nothing urgent right now: the shift is in line with normal.');
+    const filas = d.hallazgos.map((h) => `- **${h.titulo}.** ${h.detalle}`);
+    if (riesgo.length) filas.unshift(tx(`- **${riesgo.length} ${riesgo.length === 1 ? 'ruta en riesgo' : 'rutas en riesgo'}:** ${riesgo.map((r) => `${route(r.ro)} (${fmt(r.ro.salida)})`).join(', ')}.`, `- **${riesgo.length} ${riesgo.length === 1 ? 'route at risk' : 'routes at risk'}:** ${riesgo.map((r) => `${route(r.ro)} (${fmt(r.ro.salida)})`).join(', ')}.`));
+    return `${tx('Situación', 'Situation')}:\n${filas.join('\n')}`;
   }
   const items = accionesDisponibles(d).map((a) => `**${a.titulo}:** ${a.texto}`);
   if (!items.length) {
@@ -499,19 +526,4 @@ function skuDetalle(sku, sim) {
     `Stock: ${num(total)} cases in ${locs.length} locations; pick face ${face.id} (level ${face.level + 1}, ${num(face.units)} cases). Forecast demand ${num(sku.demanda)} cases/day.`,
     `Today: ${sku.lineas} lines, ${sku.cortas} short.`,
   ]).join('\n\n');
-}
-
-function red(ctx) {
-  const rows = ctx.network?.();
-  if (!rows?.length) return tx('No tengo todavía los datos del resto de almacenes.', 'I do not have the other warehouses\' data yet.');
-  const filas = rows.map((r) => tx(
-    `- **${r.site.nombre}**: OTIF ${pct(r.k.otif)}, fill ${pct(r.k.fill)}, dock-to-stock ${num(r.k.dts)} min, ocupación ${pct(r.k.ocupacion)}, ${r.k.operativas}/${r.k.totalCarretillas} carretillas${r.top ? ` · ${r.top.titulo.toLowerCase()}` : ''}`,
-    `- **${r.site.nombre}**: OTIF ${pct(r.k.otif)}, fill ${pct(r.k.fill)}, dock-to-stock ${num(r.k.dts)} min, occupancy ${pct(r.k.ocupacion)}, ${r.k.operativas}/${r.k.totalCarretillas} forklifts${r.top ? ` · ${r.top.titulo.toLowerCase()}` : ''}`,
-  ));
-  const peor = rows.slice().sort((a, b) => (a.k.otif ?? 1) - (b.k.otif ?? 1))[0];
-  return [
-    tx(`Comparación a las ${fmt(rows[0].k.t)} (mismo momento del turno en los tres):`, `Comparison at ${fmt(rows[0].k.t)} (same point in the shift for all three):`),
-    filas.join('\n'),
-    peor.top ? tx(`El que más preocupa es **${peor.site.nombre}**: ${peor.top.detalle}`, `The most worrying is **${peor.site.nombre}**: ${peor.top.detalle}`) : '',
-  ].filter(Boolean).join('\n\n');
 }

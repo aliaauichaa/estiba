@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Estiba · Gemelo digital de almacén</title>
-  <meta name="description" content="Estiba: gemelo digital de almacén en 3D. Simula la operativa de un turno (recepción, ubicación, picking y expedición), calcula OTIF, fill rate y dock-to-stock, propone slotting ABC y explica las desviaciones. Warehouse digital twin in 3D, in Spanish and English." />
+  <title>Estiba · Gemelo digital de operaciones logísticas</title>
+  <meta name="description" content="Estiba: gemelo digital en 3D de tres operativas logísticas: un almacén de distribución, una cadena de suministro de automoción (proveedores Tier 3, Tier 2 y Tier 1 hasta la línea de montaje) y una red de última milla (cross-dock, delegaciones y reparto). Indicadores, seguimiento y un asistente con IA que explica las desviaciones. In Spanish and English." />
   <link rel="alternate" hreflang="es" href="https://d1ex3zlctjya5a.cloudfront.net/?lang=es" />
   <link rel="alternate" hreflang="en" href="https://d1ex3zlctjya5a.cloudfront.net/?lang=en" />
   <meta name="author" content="Ali Aauicha" />
@@ -23,9 +23,9 @@
           <path d="M3 13.5 16 20.5 29 13.5V17L16 24 3 17Z" fill="#c9821a" />
           <path d="M3 20.5 16 27.5 29 20.5V24L16 31 3 24Z" fill="#8a5a14" />
         </svg>
-        <span class="brand-text"><b>Estiba</b><small>Gemelo digital de almacén</small></span>
+        <span class="brand-text"><b>Estiba</b><small>Gemelo digital de operaciones</small></span>
       </a>
-      <nav class="sites" id="sites" aria-label="Almacenes"></nav>
+      <nav class="sites" id="ops" aria-label="Operativas"></nav>
       <div class="clock">
         <span class="live" id="live"><i aria-hidden="true"></i><b id="live-label">EN VIVO</b></span>
         <div class="time"><span id="clock">--:--</span><small id="shift">Turno 06:00–22:00</small></div>
@@ -40,11 +40,32 @@
 
     <main class="work">
       <div class="viewport" id="viewport">
-        <div class="modes" id="modes" role="group" aria-label="Vista de la nave"></div>
-        <div class="banner" id="banner" hidden></div>
+        <div class="vp-left">
+          <div class="modes" id="modes" role="group" aria-label="Vista"></div>
+          <div class="cams" id="cams" role="group" aria-label="Cámara"></div>
+          <div class="hint" id="hint"></div>
+        </div>
+        <div class="vp-right">
+          <div class="banner" id="banner" hidden></div>
+          <div class="toasts" id="toasts" aria-live="polite"></div>
+        </div>
         <div class="legend" id="legend"></div>
-        <div class="hint">Arrastra para mover · rueda para acercar · clic en una carretilla, un camión o un hueco</div>
-        <div class="loading" id="loading">Montando la nave…</div>
+        <section class="tracker" id="tracker" aria-label="Seguimiento">
+          <div class="tr-head">
+            <b class="tr-title" id="tr-title"></b>
+            <span class="tr-id mono" id="tr-id"></span>
+            <span class="tr-sub" id="tr-sub"></span>
+            <div class="tr-modes" id="tr-modes" role="group"></div>
+            <button type="button" class="tr-btn" data-tr="prev" aria-label="Anterior">‹</button>
+            <button type="button" class="tr-btn" data-tr="next" aria-label="Siguiente">›</button>
+            <button type="button" class="tr-btn tr-min" data-tr="min" aria-label="Plegar">–</button>
+          </div>
+          <div class="tr-body">
+            <ol class="tr-steps" id="tr-steps"></ol>
+            <div class="tr-side" id="tr-side"></div>
+          </div>
+        </section>
+        <div class="loading" id="loading">Montando la escena…</div>
       </div>
       <aside class="side">
         <div class="tabs" role="tablist" id="tabs"></div>
@@ -64,7 +85,7 @@
     </section>
 
     <footer class="foot">
-      <span>Datos simulados: almacenes, pedidos y transportistas son ficticios.</span>
+      <span>Datos simulados: pedidos, proveedores, volúmenes e incidencias son ficticios.</span>
       <span>Proyecto de <a href="https://www.linkedin.com/in/ali-aauicha/" target="_blank" rel="noopener">Ali Aauicha</a> · Three.js + simulación propia</span>
     </footer>
   </div>

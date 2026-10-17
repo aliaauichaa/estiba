@@ -11,24 +11,30 @@ $Region = 'eu-south-2'
 $Api = 'https://dnzqql23zkuwpjwv7mq54eht7a0sihey.lambda-url.eu-south-2.on.aws/'
 Set-Location $PSScriptRoot
 
+npm test
+if ($LASTEXITCODE -ne 0) { throw 'Las pruebas fallan: no se despliega.' }
+
+# La Lambda va despues de las pruebas y antes de la web (backend antes que frontend).
 if ($Lambda) {
   if (Test-Path asistente.zip) { Remove-Item asistente.zip }
   # ficha-ali.mjs es copia de Proyecto IA/ficha-ali (node sincronizar.mjs): preguntas sobre Ali (ali.mjs, ruta.mjs).
   Compress-Archive -Path lambda/asistente/index.mjs, lambda/asistente/cifras.mjs, lambda/asistente/acciones.mjs, lambda/asistente/ruta.mjs, lambda/asistente/ali.mjs, lambda/asistente/ficha-ali.mjs -DestinationPath asistente.zip -Force
   aws lambda update-function-code --region $Region --function-name estiba-asistente --zip-file fileb://asistente.zip --query "[FunctionName,LastUpdateStatus]" --output text
+  if ($LASTEXITCODE -ne 0) { throw 'Fallo al subir la Lambda: no se despliega la web.' }
   aws lambda wait function-updated --region $Region --function-name estiba-asistente
+  if ($LASTEXITCODE -ne 0) { throw 'La Lambda no termino de actualizarse: no se despliega la web.' }
   Remove-Item asistente.zip
 }
-
-npm test
-if ($LASTEXITCODE -ne 0) { throw 'Las pruebas fallan: no se despliega.' }
 $env:VITE_ESTIBA_API = $Api
 npx vite build
 if ($LASTEXITCODE -ne 0) { throw 'Fallo al compilar.' }
 Remove-Item Env:\VITE_ESTIBA_API
 
 aws s3 sync dist/assets s3://estiba-web/assets --region $Region --delete --cache-control "public,max-age=31536000,immutable" --only-show-errors
+if ($LASTEXITCODE -ne 0) { throw 'Fallo al subir la web a S3.' }
 aws s3 cp dist/favicon.svg s3://estiba-web/favicon.svg --region $Region --cache-control "public,max-age=86400" --only-show-errors
+if ($LASTEXITCODE -ne 0) { throw 'Fallo al subir la web a S3.' }
 aws s3 cp dist/index.html s3://estiba-web/index.html --region $Region --cache-control "no-cache" --only-show-errors
+if ($LASTEXITCODE -ne 0) { throw 'Fallo al subir la web a S3.' }
 aws cloudfront create-invalidation --distribution-id E1LED0757CV5D3 --paths "/index.html" "/" --query "Invalidation.Status" --output text
 Write-Host "Web: https://d1ex3zlctjya5a.cloudfront.net"

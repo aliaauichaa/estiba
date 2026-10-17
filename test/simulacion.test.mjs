@@ -9,8 +9,8 @@ import { answerLocal, routeStatus } from '../src/analysis/assistant.js';
 const site = (id) => SITES.find((s) => s.id === id);
 
 test('misma semilla, mismo día', () => {
-  const a = runDay(site('mad'), 3).kpis();
-  const b = runDay(site('mad'), 3).kpis();
+  const a = runDay(site('zgz'), 3).kpis();
+  const b = runDay(site('zgz'), 3).kpis();
   assert.deepEqual(a, b);
 });
 

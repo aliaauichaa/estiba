@@ -1,20 +1,17 @@
 import './style.css';
-import { SITES } from './data/sites.js';
-import { Simulation, SHIFT_START, SHIFT_END, fmt, runDay } from './sim/engine.js';
-import { WarehouseScene, MODES } from './scene/warehouse3d.js';
-import { computeHistory, baselineAt } from './analysis/history.js';
-import { analyzeSlotting } from './analysis/optimize.js';
-import { answerLocal, diagnose, sugerencias, contextoDeRuta } from './analysis/assistant.js';
+import { SHIFT_START, SHIFT_END, fmt } from './sim/engine.js';
+import { Stage } from './scene/stage.js';
+import { mediaEn } from './analysis/history.js';
 import { API_URL, answerRemote } from './analysis/remote.js';
 import { esPreguntaSobreAli } from '../lambda/asistente/ruta.mjs';
-import { ShiftChart, chartLegend } from './ui/chart.js';
-import { tx, lang, setLang, onLang, pct, num, ppUnit } from './i18n.js';
-import { renderOverview, renderSelection, renderRoutes, renderOpt, riskCount } from './ui/panels.js';
+import { ShiftChart } from './ui/chart.js';
+import { tx, lang, setLang, onLang, num, ppUnit } from './i18n.js';
 import { md, esc } from './ui/md.js';
+import { OPERATIVAS } from './ops/index.js';
 
-// Modo «en vivo»: el reloj del almacén es la hora real de España, minuto a minuto. El turno es de
-// 06:00 a 22:00; de noche se reproduce el turno de día en diferido (22:00 → 10:00, 06:00 → 18:00)
-// para que siempre haya actividad, con su aviso.
+// Modo «en vivo»: el reloj es la hora real de España, minuto a minuto. El turno es de 06:00 a 22:00;
+// de noche se reproduce el turno de día en diferido (22:00 → 10:00, 06:00 → 18:00) para que siempre
+// haya actividad, con su aviso. Vale para las tres operativas.
 const NIGHT_REPLAY_FROM = 10 * 60;
 
 function madridNow() {
@@ -30,83 +27,90 @@ function liveTarget() {
   const intoNight = (real - SHIFT_END + 1440) % 1440;
   return { t: NIGHT_REPLAY_FROM + intoNight, replay: true, real };
 }
-const TABS = [
-  { id: 'detalle', nombre: () => tx('Operativa', 'Operations') },
-  { id: 'rutas', nombre: () => tx('Expediciones', 'Dispatch') },
-  { id: 'opt', nombre: () => tx('Optimización', 'Optimisation') },
-];
-const KPIS = [
-  { id: 'otif', label: () => 'OTIF', tip: () => tx('Pedidos que salen a tiempo y completos', 'Orders shipped on time and in full'), f: (v) => pct(v), up: true, unit: 'pp' },
-  { id: 'fill', label: () => 'Fill rate', tip: () => tx('Líneas servidas completas', 'Lines shipped in full'), f: (v) => pct(v), up: true, unit: 'pp' },
-  { id: 'dts', label: () => 'Dock-to-stock', tip: () => tx('Minutos desde que el camión atraca hasta que el palé está ubicado', 'Minutes from the truck docking to the pallet being put away'), f: (v) => (v == null ? '—' : `${num(v)}<small>min</small>`), up: false, unit: 'min' },
-  { id: 'utilizacion', label: () => tx('Uso de equipos', 'Equipment use'), tip: () => tx('Tiempo trabajando sobre tiempo disponible de las carretillas', 'Forklift working time over available time'), f: (v) => pct(v, 0), up: false, unit: 'pp' },
-  { id: 'productividad', label: () => tx('Líneas/h·equipo', 'Lines/h per truck'), tip: () => tx('Líneas preparadas por hora y carretilla disponible', 'Lines picked per hour per available forklift'), f: (v) => num(v), up: true, unit: '' },
-  { id: 'ocupacion', label: () => tx('Ocupación', 'Occupancy'), tip: () => tx('Huecos de estantería ocupados o asignados', 'Rack locations occupied or assigned'), f: (v) => pct(v, 0), up: false, unit: 'pp' },
-  { id: 'calle', label: () => tx('Palés en calles', 'Pallets in lanes'), tip: () => tx('Palés descargados esperando a ser ubicados', 'Unloaded pallets waiting for put-away'), f: (v) => num(v), up: false, unit: '', baseKey: 'calle' },
-];
 
 // Textos fijos de index.html: [selector, propiedad, es, en].
 const STATIC = [
-  ['.brand-text small', 'textContent', 'Gemelo digital de almacén', 'Warehouse digital twin'],
-  ['#sites', 'aria-label', 'Almacenes', 'Warehouses'],
-  ['#modes', 'aria-label', 'Vista de la nave', 'Warehouse view'],
-  ['.hint', 'textContent', 'Arrastra para mover · rueda para acercar · clic en una carretilla, un camión o un hueco', 'Drag to pan · scroll to zoom · click a forklift, a truck or a location'],
-  ['#loading', 'textContent', 'Montando la nave…', 'Building the warehouse…'],
+  ['.brand-text small', 'textContent', 'Gemelo digital de operaciones', 'Operations digital twin'],
+  ['#ops', 'aria-label', 'Operativas', 'Operations'],
+  ['#modes', 'aria-label', 'Vista', 'View'],
+  ['#cams', 'aria-label', 'Cámara', 'Camera'],
+  ['#loading', 'textContent', 'Montando la escena…', 'Building the scene…'],
+  ['#tracker', 'aria-label', 'Seguimiento', 'Tracking'],
+  ['[data-tr="min"]', 'aria-label', 'Plegar', 'Collapse'],
+  ['#kpis', 'aria-label', 'Indicadores', 'Indicators'],
+  ['[data-tr="prev"]', 'aria-label', 'Anterior', 'Previous'],
+  ['[data-tr="next"]', 'aria-label', 'Siguiente', 'Next'],
   ['.chart-card h3', 'textContent', 'Ritmo del turno', 'Shift pace'],
   ['.feed-card h3', 'textContent', 'Lo que está pasando', 'What is happening'],
-  ['.foot span:first-child', 'textContent', 'Datos simulados: almacenes, pedidos y transportistas son ficticios.', 'Simulated data: warehouses, orders and carriers are fictitious.'],
+  ['.foot span:first-child', 'textContent', 'Datos simulados: pedidos, proveedores, volúmenes e incidencias son ficticios. Las marcas de última milla se citan solo como ejemplo de cliente.', 'Simulated data: orders, suppliers, volumes and incidents are fictitious. Last-mile brands are named only as example customers.'],
   ['.foot span:last-child', 'innerHTML', 'Proyecto de <a href="https://www.linkedin.com/in/ali-aauicha/" target="_blank" rel="noopener">Ali Aauicha</a> · Three.js + simulación propia', 'A project by <a href="https://www.linkedin.com/in/ali-aauicha/" target="_blank" rel="noopener">Ali Aauicha</a> · Three.js + custom simulation'],
   ['#ai-teaser b', 'textContent', 'Pregunta a la IA', 'Ask the AI'],
-  ['#ai-teaser span', 'textContent', '«¿Por qué baja el OTIF hoy?»', '"Why is OTIF dropping today?"'],
+  ['.ai-fab-tag', 'textContent', 'IA', 'AI'],
   ['#ai-teaser .teaser-x', 'aria-label', 'Cerrar aviso', 'Close'],
   ['#ai-fab', 'aria-label', 'Abrir el asistente de operaciones con IA', 'Open the AI operations assistant'],
   ['#ai-panel', 'aria-label', 'Asistente de operaciones', 'Operations assistant'],
   ['.ai-top-info b', 'textContent', 'Asistente de operaciones', 'Operations assistant'],
   ['#ai-close', 'aria-label', 'Cerrar el asistente', 'Close the assistant'],
-  ['#ai-input', 'placeholder', 'Pregunta sobre el turno…', 'Ask about the shift…'],
   ['#ai-input', 'aria-label', 'Tu pregunta', 'Your question'],
   ['#ai-send', 'aria-label', 'Enviar', 'Send'],
 ];
 
 const $ = (s) => document.querySelector(s);
 const state = {
-  site: SITES[0],
+  op: null,
   sim: null,
-  tab: 'detalle',
+  variant: null,
+  tab: null,
   sel: null,
-  mode: 'operativa',
-  slotting: 'actual',
+  mode: null,
   history: new Map(),
-  opt: null,
-  dayCompare: null,
   chats: new Map(),
-  network: null,
-  lastEvents: 0,
+  dots: new Map(),
+  track: { modo: null, key: null, min: false },
+  toastFrom: 0,
+  alertLast: new Map(),
+  lastEvents: null,
 };
 
-const scene = new WarehouseScene($('#viewport'), { onSelect: (sel) => select(sel) });
+const stage = new Stage($('#viewport'), { onSelect: (sel) => select(sel) });
+stage.onFollow = () => paintCams();
 const chart = new ShiftChart($('#chart'));
+
+// Lo que una operativa puede pedirle a la página desde sus paneles (onAct).
+const ui = {
+  get sel() { return state.sel; },
+  get variant() { return state.variant; },
+  setMode: (m) => setMode(m),
+  setTab: (t) => setTab(t),
+  setVariant(v) { state.variant = v; resetDay(state.sim.t); },
+  select: (sel, opts) => select(sel, opts),
+  ask: (q) => ask(q),
+};
 
 // ---------------------------------------------------------------------------- montaje de la página
 
 function buildChrome() {
-  $('#sites').innerHTML = SITES.map((s) => `<button class="site-btn" data-site="${s.id}"><span class="dot" id="dot-${s.id}"></span>${esc(s.nombre)} <small>${esc(s.zona)}</small></button>`).join('');
-  $('#sites').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-site]');
-    if (b) loadSite(b.dataset.site);
+  $('#ops').innerHTML = OPERATIVAS.map((o) => `<button class="site-btn" data-op="${o.id}"><span class="dot" id="dot-${o.id}"></span><span class="op-name"></span> <small></small></button>`).join('');
+  $('#ops').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-op]');
+    if (b && b.dataset.op !== state.op?.id) loadOp(b.dataset.op);
   });
-  $('#modes').innerHTML = MODES.map((m) => `<button data-mode="${m.id}"></button>`).join('');
   $('#modes').addEventListener('click', (e) => {
     const b = e.target.closest('[data-mode]');
     if (b) setMode(b.dataset.mode);
   });
-  $('#tabs').innerHTML = TABS.map((t) => `<button class="tab" role="tab" data-tab="${t.id}"><span class="tab-name"></span><span class="badge" id="badge-${t.id}" hidden></span></button>`).join('');
+  $('#cams').addEventListener('click', (e) => {
+    const v = e.target.closest('[data-view]');
+    if (v) { stage.setView(v.dataset.view); paintCams(v.dataset.view); return; }
+    if (e.target.closest('[data-follow]')) { stage.follow(!stage.following); paintCams(); }
+  });
   $('#tabs').addEventListener('click', (e) => {
     const b = e.target.closest('[data-tab]');
     if (b) setTab(b.dataset.tab);
   });
   $('#tab-body').addEventListener('click', onPanelClick);
-  $('#kpis').innerHTML = KPIS.map((k) => `<div class="kpi" id="kpi-${k.id}"><div class="k-label"><abbr></abbr></div><div class="k-value">—</div><div class="k-delta flat">&nbsp;</div><svg class="spark" viewBox="0 0 64 22" preserveAspectRatio="none"></svg></div>`).join('');
+  $('#tracker').addEventListener('click', onTrackerClick);
+  $('#toasts').addEventListener('click', onToastClick);
   $('#lang').addEventListener('click', (e) => {
     const b = e.target.closest('[data-lang]');
     if (b) setLang(b.dataset.lang);
@@ -115,32 +119,44 @@ function buildChrome() {
     if (e.target.closest('input, textarea')) return;
     if (e.key === 'Escape') select(null);
   });
-  paintLabels();
+  new ResizeObserver(() => syncTrackerHeight()).observe($('#tracker'));
 }
 
-// Todo lo que depende del idioma y no se repinta solo en cada refresco.
+// Todo lo que depende del idioma o de la operativa y no se repinta solo en cada refresco.
 function paintLabels() {
+  const op = state.op;
   document.documentElement.lang = lang;
-  document.title = tx('Estiba · Gemelo digital de almacén', 'Estiba · Warehouse digital twin');
+  document.title = tx('Estiba · Gemelo digital de operaciones logísticas', 'Estiba · Logistics operations digital twin');
   for (const [sel, prop, es, en] of STATIC) {
     const el = document.querySelector(sel);
     if (!el) continue;
     if (prop === 'textContent' || prop === 'innerHTML') el[prop] = tx(es, en);
     else el.setAttribute(prop, tx(es, en));
   }
-  for (const b of document.querySelectorAll('#modes button')) b.textContent = MODES.find((m) => m.id === b.dataset.mode).nombre;
-  for (const b of document.querySelectorAll('#tabs .tab')) b.querySelector('.tab-name').textContent = TABS.find((t) => t.id === b.dataset.tab).nombre();
-  for (const def of KPIS) {
-    const ab = document.querySelector(`#kpi-${def.id} abbr`);
-    ab.textContent = def.label();
-    ab.title = def.tip();
+  for (const b of document.querySelectorAll('#ops [data-op]')) {
+    const o = OPERATIVAS.find((x) => x.id === b.dataset.op);
+    b.querySelector('.op-name').textContent = o.nombre();
+    b.querySelector('small').textContent = o.sub();
+    b.classList.toggle('on', o === op);
   }
-  $('#chart-legend').innerHTML = chartLegend().map((l) => `<span><i style="background:${l.color}"></i>${l.label}</span>`).join('');
-  $('#ai-quick').innerHTML = sugerencias().map((q) => `<button type="button" class="chip" data-ask="${esc(q)}">${esc(q)}</button>`).join('');
+  if (!op) return;
+  const modes = op.content.modes;
+  $('#modes').hidden = modes.length < 2;
+  $('#modes').innerHTML = modes.map((m) => `<button data-mode="${m.id}" class="${m.id === state.mode ? 'on' : ''}">${esc(m.nombre)}</button>`).join('');
+  $('#tabs').innerHTML = op.tabs.map((t) => `<button class="tab ${t.id === state.tab ? 'on' : ''}" role="tab" data-tab="${t.id}"><span class="tab-name">${esc(t.nombre())}</span><span class="badge" id="badge-${t.id}" hidden></span></button>`).join('');
+  $('#kpis').innerHTML = op.kpis.map((k) => `<div class="kpi" id="kpi-${k.id}"><div class="k-label"><abbr title="${esc(k.tip())}">${esc(k.label())}</abbr></div><div class="k-value">—</div><div class="k-delta flat">&nbsp;</div><svg class="spark" viewBox="0 0 64 22" preserveAspectRatio="none"></svg></div>`).join('');
+  $('#hint').textContent = op.hint();
+  $('#chart-legend').innerHTML = op.chart.legend().map((l) => `<span><i style="background:${l.color}"></i>${l.label}</span>`).join('');
+  $('#ai-quick').innerHTML = op.asistente.sugerencias().map((q) => `<button type="button" class="chip" data-ask="${esc(q)}">${esc(q)}</button>`).join('');
+  $('#ai-teaser span').textContent = op.asistente.teaser();
+  $('#ai-input').placeholder = op.asistente.placeholder();
+  $('#tr-modes').innerHTML = op.tracker.modos.map((m) => `<button type="button" data-tr-modo="${m.id}">${esc(m.nombre())}</button>`).join('');
   for (const b of document.querySelectorAll('#lang [data-lang]')) {
     b.classList.toggle('on', b.dataset.lang === lang);
     b.setAttribute('aria-pressed', String(b.dataset.lang === lang));
   }
+  setMode(state.mode);
+  paintCams();
 }
 
 onLang(() => {
@@ -150,43 +166,27 @@ onLang(() => {
     if (u.searchParams.has('lang')) { u.searchParams.set('lang', lang); window.history.replaceState(null, '', u); }
   } catch { /* sin history */ }
   paintLabels();
-  setMode(state.mode);
-  scene.relabel();
-  state.network = null;
+  hideToasts();
+  state.op?.content.relabel();
   panelSig = '';
-  state.lastEvents = -1;
+  state.lastEvents = null;
+  trackSig = '';
   if (state.sim) {
     refreshAll();
     renderPanel(true);
-    lastNetwork = -1;
-    paintSiteDots();
+    lastDots = -1;
   }
   if (state.chatOpen) renderChat();
 });
 
 function setMode(mode) {
-  state.mode = mode;
-  scene.setMode(mode);
-  for (const b of document.querySelectorAll('#modes button')) b.classList.toggle('on', b.dataset.mode === mode);
-  const legends = {
-    operativa: tx(
-      '<span><i style="background:#c9a36b"></i>Palé en estantería</span><span><i style="background:#ff6b5e"></i>Palé sin hueco</span><span><i style="background:#cfe7e3"></i>Pedido preparado</span><span><i style="background:#2ec4b6;border-radius:50%"></i>Carretilla preparando</span><span><i style="background:#6c9cf0;border-radius:50%"></i>Ubicando</span>',
-      '<span><i style="background:#c9a36b"></i>Pallet in rack</span><span><i style="background:#ff6b5e"></i>Pallet with no location</span><span><i style="background:#cfe7e3"></i>Order ready</span><span><i style="background:#2ec4b6;border-radius:50%"></i>Forklift picking</span><span><i style="background:#6c9cf0;border-radius:50%"></i>Putting away</span>',
-    ),
-    ocupacion: tx(
-      '<span><i style="background:#2ec4b6"></i>Hueco de picking con stock</span><span><i style="background:#f5a524"></i>Menos del 30 %</span><span><i style="background:#ff6b5e"></i>Picking vacío</span><span><i style="background:#3f7d79"></i>Reserva</span><span class="muted">La altura del palé indica las cajas que quedan</span>',
-      '<span><i style="background:#2ec4b6"></i>Pick face with stock</span><span><i style="background:#f5a524"></i>Under 30%</span><span><i style="background:#ff6b5e"></i>Empty pick face</span><span><i style="background:#3f7d79"></i>Reserve</span><span class="muted">Pallet height shows the cases left</span>',
-    ),
-    abc: tx(
-      '<span><i style="background:#2ec4b6"></i>A · 80 % de las líneas</span><span><i style="background:#f5a524"></i>B · 15 %</span><span><i style="background:#56627a"></i>C · 5 %</span><span><i style="background:#343c49"></i>Reserva</span>',
-      '<span><i style="background:#2ec4b6"></i>A · 80% of lines</span><span><i style="background:#f5a524"></i>B · 15%</span><span><i style="background:#56627a"></i>C · 5%</span><span><i style="background:#343c49"></i>Reserve</span>',
-    ),
-    calor: tx(
-      '<span>Visitas de picking hoy</span><span><span class="ramp" style="background:linear-gradient(90deg,#1f2a38,#3f6fc4,#f5a524,#ff6b5e)"></span></span>',
-      '<span>Picking visits today</span><span><span class="ramp" style="background:linear-gradient(90deg,#1f2a38,#3f6fc4,#f5a524,#ff6b5e)"></span></span>',
-    ),
-  };
-  $('#legend').innerHTML = legends[mode];
+  const op = state.op;
+  if (!op) return;
+  const modes = op.content.modes;
+  state.mode = modes.some((m) => m.id === mode) ? mode : modes[0].id;
+  op.content.setMode(state.mode);
+  for (const b of document.querySelectorAll('#modes button')) b.classList.toggle('on', b.dataset.mode === state.mode);
+  $('#legend').innerHTML = op.legend(state.mode);
 }
 
 function setTab(tab) {
@@ -195,87 +195,96 @@ function setTab(tab) {
   renderPanel(true);
 }
 
-// ---------------------------------------------------------------------------- almacenes
+// Barra de cámara: encuadres de la operativa y, si lo seleccionado se mueve, «seguir».
+function paintCams(activa = null) {
+  const op = state.op;
+  if (!op?.content.sim) return;
+  const views = op.content.views();
+  const f = state.sel ? op.content.focusOf(state.sel) : null;
+  const seguir = f?.follow
+    ? `<button type="button" class="follow ${stage.following ? 'on' : ''}" data-follow>${stage.following ? tx('Siguiendo', 'Following') : tx('Seguir', 'Follow')} ${esc(String(state.sel.id))}</button>`
+    : '';
+  $('#cams').innerHTML = `<span class="cams-l">${tx('Cámara', 'Camera')}</span>${views.map((v) => `<button type="button" data-view="${v.id}" class="${v.id === activa ? 'on' : ''}">${esc(v.nombre)}</button>`).join('')}${seguir}`;
+}
 
-async function loadSite(id, at = liveTarget().t) {
-  const site = SITES.find((s) => s.id === id) || SITES[0];
-  state.site = site;
-  state.slotting = 'actual';
-  state.dayCompare = null;
-  for (const b of document.querySelectorAll('.site-btn')) b.classList.toggle('on', b.dataset.site === site.id);
+// ---------------------------------------------------------------------------- operativas
+
+function loadOp(id, at = liveTarget().t) {
+  const op = OPERATIVAS.find((o) => o.id === id) || OPERATIVAS[0];
+  state.op = op;
+  state.variant = null;
+  state.tab = op.tabs[0].id;
+  state.mode = op.content.modes[0].id;
+  state.track = { modo: op.tracker.modos[0].id, key: null, min: state.track.min };
+  try {
+    const u = new URL(window.location.href);
+    u.searchParams.set('op', op.id);
+    window.history.replaceState(null, '', u);
+  } catch { /* sin history */ }
+  hideToasts();
+  paintLabels();
   resetDay(at, true);
+  paintCams();
+  renderPanel(true);
   if (state.chatOpen) renderChat();
-  if (!state.history.has(site.id)) {
-    state.history.set(site.id, null);
-    const h = await computeHistory(site, 14);
-    state.history.set(site.id, h);
-    if (state.site === site) { refreshAll(); }
+  if (!state.history.has(op.id)) {
+    state.history.set(op.id, null);
+    op.historia().then((h) => {
+      state.history.set(op.id, h);
+      if (state.op === op) refreshAll();
+      lastDots = -1;
+    });
   }
 }
 
-function resetDay(at = SHIFT_START, newSite = false) {
-  const sim = new Simulation(state.site, { slotting: state.slotting });
+function resetDay(at = SHIFT_START, nueva = false) {
+  const op = state.op;
+  const sim = op.crearSim(state.variant);
   if (at > SHIFT_START) sim.advance(at - SHIFT_START);
   state.sim = sim;
-  state.lastEvents = 0;
+  state.lastEvents = null;
   state.sel = null;
-  if (newSite || !state.opt || state.opt.site !== state.site.id) {
-    const base = state.slotting === 'actual' ? sim : new Simulation(state.site);
-    state.opt = { site: state.site.id, ...analyzeSlotting(base) };
-  }
-  scene.load(sim);
-  scene.setMode(state.mode);
+  // Lo que ya ha pasado al cargar no salta como aviso; solo lo nuevo.
+  state.toastFrom = sim.t;
+  state.alertLast = new Map([...op.alertas(sim).keys()].map((k) => [k, sim.t]));
+  stage.setContent(op.content, sim);
+  if (nueva) stage.resetView();
+  op.content.setMode(state.mode);
   $('#feed').innerHTML = '';
   refreshAll();
+  paintCams();
   const ld = $('#loading');
   if (!ld.hidden) { ld.classList.add('done'); setTimeout(() => { ld.hidden = true; }, 450); }
 }
 
 function currentHistory() {
-  return state.history.get(state.site.id) || null;
+  return state.history.get(state.op.id) || null;
 }
 
-function ctx() {
-  return { sim: state.sim, history: currentHistory(), opt: state.opt, network: networkRows };
-}
-
-// Los otros almacenes se simulan hasta la misma hora para poder compararlos.
-function networkRows() {
+// Punto de estado de cada operativa en el selector: la misma hora del día en las tres.
+var lastDots = -1; // var: onLang() la reinicia y se registra antes de esta línea
+function paintDots() {
   const t = state.sim.t;
-  const key = Math.floor(t / 15);
-  if (state.network?.key === key) return state.network.rows;
-  const rows = SITES.map((site) => {
-    let sim;
-    if (site.id === state.site.id) sim = state.sim;
-    else {
-      sim = new Simulation(site);
-      sim.advance(t - SHIFT_START);
-    }
-    const d = diagnose(sim, state.history.get(site.id));
-    return { site, k: d.k, top: d.hallazgos[0] || null };
-  });
-  state.network = { key, rows };
-  return rows;
-}
-
-function paintSiteDots() {
-  const rows = networkRows();
-  for (const r of rows) {
-    const el = document.getElementById(`dot-${r.site.id}`);
+  for (const op of OPERATIVAS) {
+    const sim = op === state.op ? state.sim : op.simA(t);
+    const e = op.asistente.estado(sim, state.history.get(op.id) || null);
+    const el = document.getElementById(`dot-${op.id}`);
     if (!el) continue;
-    const o = r.k.otif;
-    const cls = r.top && r.top.peso >= 3 ? 'bad' : r.top ? 'warn' : 'ok';
-    el.className = `dot ${o == null ? (r.top ? 'warn' : 'ok') : cls}`;
-    el.title = r.top ? r.top.titulo : tx('Sin incidencias', 'No issues');
+    el.className = `dot ${e.nivel}`;
+    el.title = e.titulo;
   }
 }
 
 // ---------------------------------------------------------------------------- selección y paneles
 
-function select(sel) {
+// keepTrack: el «Ver» del propio seguimiento no cambia lo que se está siguiendo.
+function select(sel, { fly = false, keepTrack = false } = {}) {
   state.sel = sel;
-  scene.select(sel);
-  if (sel && state.tab !== 'detalle') setTab('detalle');
+  stage.select(sel, { fly });
+  const t = sel && !keepTrack ? state.op.tracker.desdeSel(state.sim, sel) : null;
+  if (t) { state.track.modo = t.modo; state.track.key = t.key; trackSig = ''; paintTracker(); }
+  paintCams();
+  if (sel && state.tab !== state.op.tabs[0].id) setTab(state.op.tabs[0].id);
   else renderPanel(true);
 }
 
@@ -285,50 +294,29 @@ function onPanelClick(e) {
     const v = s.dataset.sel;
     if (v === 'none') return select(null);
     const i = v.indexOf(':');
-    const kind = v.slice(0, i);
-    const id = v.slice(i + 1);
-    return select({ kind, id: kind === 'location' ? Number(id) : id });
+    return select(state.op.parseSel(v.slice(0, i), v.slice(i + 1)), { fly: true });
   }
-  const a = e.target.closest('[data-act]');
-  if (a) {
-    const act = a.dataset.act;
-    if (act === 'mode-abc') setMode('abc');
-    if (act === 'abc-toggle') toggleAbc();
+  const tr = e.target.closest('[data-track]');
+  if (tr) {
+    const [modo, key] = tr.dataset.track.split('|');
+    state.track = { ...state.track, modo, key, min: false };
+    trackSig = '';
+    paintTracker();
     return;
   }
+  const a = e.target.closest('[data-act]');
+  if (a) return state.op.onAct(a.dataset.act, ui, a.dataset);
+  const v = e.target.closest('[data-view]');
+  if (v) { stage.setView(v.dataset.view); return paintCams(v.dataset.view); }
   const chip = e.target.closest('[data-ask]');
   if (chip) ask(chip.dataset.ask);
 }
 
-function toggleAbc() {
-  const t = state.sim.t;
-  state.slotting = state.slotting === 'abc' ? 'actual' : 'abc';
-  resetDay(t);
-  if (state.slotting === 'abc') setMode('abc');
-  setTab('opt');
-}
-
-function computeDayCompare() {
-  if (state.dayCompare?.site === state.site.id) return;
-  const a = runDay(state.site, 0, { slotting: 'actual' }).kpis();
-  const b = runDay(state.site, 0, { slotting: 'abc' }).kpis();
-  state.dayCompare = { site: state.site.id, actual: a, abc: b };
-}
-
-var panelSig = ''; // var: onLang() la reinicia y se registra antes de esta línea
+var panelSig = ''; // var: ídem
 function renderPanel(force = false) {
   const body = $('#tab-body');
-  const sim = state.sim;
-  if (!sim) return;
-  let html;
-  if (state.tab === 'detalle') {
-    html = (state.sel && renderSelection(sim, state.sel)) || renderOverview(sim);
-  } else if (state.tab === 'rutas') {
-    html = renderRoutes(sim);
-  } else {
-    computeDayCompare();
-    html = renderOpt(state.opt, state);
-  }
+  if (!state.sim) return;
+  const html = state.op.renderTab(state.tab, state.sim, ui);
   if (!force && html === panelSig) return;
   panelSig = html;
   const top = body.scrollTop;
@@ -336,25 +324,152 @@ function renderPanel(force = false) {
   if (!force) body.scrollTop = top;
 }
 
+// ---------------------------------------------------------------------------- seguimiento por pasos
+
+var trackSig = ''; // var: ídem
+function paintTracker() {
+  const op = state.op;
+  const sim = state.sim;
+  const tk = state.track;
+  $('#tracker').classList.toggle('min', tk.min);
+  const items = op.tracker.items(sim, tk.modo);
+  if (!items.includes(tk.key)) tk.key = items[0] ?? null;
+  const v = tk.key != null ? op.tracker.vista(sim, tk.modo, tk.key) : null;
+  for (const b of document.querySelectorAll('#tr-modes [data-tr-modo]')) b.classList.toggle('on', b.dataset.trModo === tk.modo);
+  // Los botones van fuera de la firma: la lista se reordena sin cambiar de tamaño (p. ej. al parar la línea).
+  const pos = items.indexOf(tk.key);
+  $('#tracker [data-tr="prev"]').disabled = pos <= 0;
+  $('#tracker [data-tr="next"]').disabled = pos < 0 || pos >= items.length - 1;
+  const sig = JSON.stringify([lang, tk, v && { ...v, lado: v.lado && { ...v.lado, pct: v.lado.pct == null ? null : Math.round(v.lado.pct * 100) } }, items.length]);
+  if (sig === trackSig) return;
+  trackSig = sig;
+  $('#tr-title').textContent = op.tracker.titulo(tk.modo);
+  $('#tr-id').textContent = v ? v.titulo : '';
+  $('#tr-sub').textContent = v ? v.sub : tx('Nada que seguir ahora mismo', 'Nothing to track right now');
+  $('#tr-steps').innerHTML = v ? v.pasos.map((p) => `<li class="${p.estado}"><i aria-hidden="true">${p.estado === 'done' ? '✓' : p.estado === 'bad' ? '!' : ''}</i><b>${esc(p.label)}</b><small>${esc(p.det)}</small></li>`).join('') : '';
+  const l = v?.lado;
+  $('#tr-side').hidden = !l;
+  if (l) {
+    $('#tr-side').innerHTML = `<small>${esc(l.etiqueta)}</small><b>${esc(l.titulo)}</b><span>${esc(l.sub || '')}</span>${l.pct != null ? `<div class="bar"><span style="width:${Math.round(l.pct * 100)}%"></span></div>` : ''}${l.sel ? `<button type="button" class="btn secondary sm" data-tr="ver">${tx('Ver', 'View')}</button>` : ''}`;
+  }
+}
+
+function onTrackerClick(e) {
+  const m = e.target.closest('[data-tr-modo]');
+  const tk = state.track;
+  if (m) { tk.modo = m.dataset.trModo; tk.key = null; tk.min = false; trackSig = ''; return paintTracker(); }
+  const b = e.target.closest('[data-tr]');
+  if (!b) return;
+  const items = state.op.tracker.items(state.sim, tk.modo);
+  const pos = items.indexOf(tk.key);
+  if (b.dataset.tr === 'prev' && pos > 0) tk.key = items[pos - 1];
+  if (b.dataset.tr === 'next' && pos < items.length - 1) tk.key = items[pos + 1];
+  if (b.dataset.tr === 'min') tk.min = !tk.min;
+  if (b.dataset.tr === 'ver') {
+    const v = state.op.tracker.vista(state.sim, tk.modo, tk.key);
+    if (v?.lado?.sel) select(v.lado.sel, { fly: true, keepTrack: true });
+  }
+  trackSig = '';
+  paintTracker();
+}
+
+function syncTrackerHeight() {
+  const h = $('#tracker').offsetHeight;
+  $('#viewport').style.setProperty('--trh', `${h}px`);
+  const top = window.innerWidth > 640 ? 64 : 0;
+  const bottom = h + 14;
+  if (stage.pad.bottom !== bottom || stage.pad.top !== top) {
+    stage.pad = { top, bottom };
+    if (!stage.userMoved && state.op) stage.resetView();
+  }
+}
+
+// ---------------------------------------------------------------------------- avisos emergentes
+
+const TOAST_MS = 9000;
+const toasts = [];
+
+function pushToast(t) {
+  if (t.clave && toasts.some((x) => x.clave === t.clave)) return;
+  const id = Math.random().toString(36).slice(2);
+  toasts.unshift({ ...t, id, hora: fmt(state.sim.t) });
+  while (toasts.length > 3) toasts.pop();
+  paintToasts();
+  setTimeout(() => dropToast(id), TOAST_MS);
+}
+
+function dropToast(id) {
+  const i = toasts.findIndex((x) => x.id === id);
+  if (i < 0) return;
+  if (toasts[i].hover) { setTimeout(() => dropToast(id), 2500); return; }
+  toasts.splice(i, 1);
+  paintToasts();
+}
+
+function hideToasts() {
+  toasts.length = 0;
+  paintToasts();
+}
+
+function paintToasts() {
+  $('#toasts').innerHTML = toasts.map((t) => `<div class="toast ${t.nivel || 'info'}" data-toast="${t.id}">
+    <div class="toast-top"><b>${esc(t.titulo)}</b><time>${t.hora}</time><button type="button" class="toast-x" data-toast-x aria-label="${tx('Cerrar', 'Close')}">×</button></div>
+    <p>${esc(t.texto)}</p>
+    ${t.ver || t.vista || t.tab || t.ia ? `<div class="toast-acts">${t.ver || t.vista || t.tab ? `<button type="button" data-toast-ver>${tx('Ver', 'View')}</button>` : ''}${t.ia ? `<button type="button" data-toast-ia>${tx('Pregunta a la IA', 'Ask the AI')}</button>` : ''}</div>` : ''}
+  </div>`).join('');
+}
+
+function onToastClick(e) {
+  const el = e.target.closest('[data-toast]');
+  if (!el) return;
+  const t = toasts.find((x) => x.id === el.dataset.toast);
+  if (!t) return;
+  if (e.target.closest('[data-toast-x]')) return dropToast(t.id);
+  if (e.target.closest('[data-toast-ver]')) {
+    if (t.ver) select(t.ver, { fly: true });
+    else if (t.vista) { stage.setView(t.vista); paintCams(t.vista); }
+    if (t.tab && !t.ver) setTab(t.tab);
+  }
+  if (e.target.closest('[data-toast-ia]')) ask(t.ia);
+}
+
+$('#toasts').addEventListener('pointerover', (e) => { const el = e.target.closest('[data-toast]'); const t = el && toasts.find((x) => x.id === el.dataset.toast); if (t) t.hover = true; });
+$('#toasts').addEventListener('pointerout', (e) => { const el = e.target.closest('[data-toast]'); const t = el && toasts.find((x) => x.id === el.dataset.toast); if (t) t.hover = false; });
+
+function checkToasts() {
+  const sim = state.sim;
+  const op = state.op;
+  const nuevos = sim.events.filter((e) => e.t > state.toastFrom);
+  state.toastFrom = sim.t;
+  // Si de golpe hay muchos (la pestaña estuvo en segundo plano), solo los tres últimos.
+  for (const e of nuevos.slice(-3)) {
+    const t = op.toast(e, sim);
+    if (t) pushToast({ nivel: e.nivel, texto: e.texto, ...t });
+  }
+  // Una alerta solo vuelve a avisar si ha estado más de 15 min (simulados) sin cumplirse: si la condición
+  // oscila alrededor del umbral no sale en ráfagas.
+  for (const [k, t] of op.alertas(sim)) {
+    const last = state.alertLast.get(k);
+    if (last == null || sim.t - last > 15) pushToast(t);
+    state.alertLast.set(k, sim.t);
+  }
+}
+
 // ---------------------------------------------------------------------------- asistente
 
 function chatLog() {
-  if (!state.chats.has(state.site.id)) {
-    state.chats.set(state.site.id, [{ who: 'bot', welcome: true }]);
-  }
-  return state.chats.get(state.site.id);
+  const id = state.op.id;
+  if (!state.chats.has(id)) state.chats.set(id, [{ who: 'bot', welcome: true }]);
+  return state.chats.get(id);
 }
 
 // El asistente vive en una burbuja flotante (como en Mi Campo y Quillaflow), siempre a mano.
 function renderChat() {
   const log = chatLog();
-  $('#ai-sub').textContent = `${state.site.nombre} · ${API_URL ? tx('Claude en Amazon Bedrock', 'Claude on Amazon Bedrock') : tx('datos del turno en directo', 'live shift data')}`;
+  const op = state.op;
+  $('#ai-sub').textContent = `${op.nombre()} · ${API_URL ? tx('Claude en Amazon Bedrock', 'Claude on Amazon Bedrock') : tx('datos del turno en directo', 'live shift data')}`;
   const box = $('#ai-msgs');
-  const welcome = () => tx(
-    `Hola. Tengo delante el turno de **${state.site.nombre}** en tiempo real y los 14 días anteriores para comparar. Pregúntame lo que necesites. También puedo contarte quién ha creado Estiba.`,
-    `Hi. I am looking at the **${state.site.nombre}** shift in real time, with the previous 14 days to compare against. Ask me anything. I can also tell you who built Estiba.`,
-  );
-  box.innerHTML = log.map((m) => `<div class="msg ${m.who}">${m.who === 'bot' ? md(m.welcome ? welcome() : m.text) : esc(m.text)}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`).join('')
+  box.innerHTML = log.map((m) => `<div class="msg ${m.who}">${m.who === 'bot' ? md(m.welcome ? op.asistente.bienvenida() : m.text) : esc(m.text)}${m.src ? `<div class="src">${esc(m.src)}</div>` : ''}</div>`).join('')
     + (log.pending ? '<div class="msg bot"><span class="typing"><i></i><i></i><i></i></span></div>' : '');
   box.scrollTop = box.scrollHeight;
   $('#ai-send').disabled = !!log.pending;
@@ -441,19 +556,21 @@ async function ask(q) {
   log.push({ who: 'user', text: q });
   log.pending = true;
   renderChat();
-  const c = ctx();
+  const op = state.op;
+  const A = op.asistente;
+  const c = A.ctx(state.sim, currentHistory());
   const hora = fmt(c.sim.t);
   const hist = log.filter((m) => m.who && !m.welcome).slice(-7, -1).map((m) => ({ rol: m.who === 'user' ? 'usuario' : 'asistente', texto: m.text }));
-  // Sin Lambda (o si falla), la respuesta local decide sola con el hilo y las rutas del simulador.
-  const local = answerLocal(q, c, { historial: hist });
-  const localEsDeAli = esPreguntaSobreAli(q, hist, contextoDeRuta(c.sim));
+  // Sin Lambda (o si falla), la respuesta local decide sola con el hilo y los nombres de la operativa.
+  const local = A.answerLocal(q, c, { historial: hist });
+  const localEsDeAli = esPreguntaSobreAli(q, hist, A.contextoDeRuta(c.sim));
   const calculado = tx(`Calculado con los datos del turno a las ${hora}`, `Computed from the shift data at ${hora}`);
   let text = local;
   // Las preguntas sobre Ali no salen de los datos del turno: sin etiqueta de «calculado con…».
   let src = localEsDeAli ? '' : calculado;
   if (API_URL) {
     try {
-      const r = await answerRemote(q, c, local, hist);
+      const r = await answerRemote(q, { contexto: A.contexto(c), respuestaBase: A.answerLocal(q, c, { sinAcciones: true }) }, hist);
       // Manda el tema que decidió la Lambda. Si es del turno y descartó la redacción del modelo, llega la
       // respuesta base (calculada sin hilo): se enseña la local del turno, no la presentación de Ali.
       if (r.tema === 'ali') {
@@ -463,7 +580,7 @@ async function ask(q) {
         text = r.texto;
         src = tx(`Redactado por Claude (Amazon Bedrock) con el diagnóstico de las ${hora}`, `Written by Claude (Amazon Bedrock) from the ${hora} diagnosis`);
       } else {
-        text = localEsDeAli ? answerLocal(q, c) : local;
+        text = localEsDeAli ? A.answerLocal(q, c) : local;
         src = calculado;
       }
     } catch {
@@ -497,19 +614,23 @@ function paintKpis() {
   const sim = state.sim;
   const k = sim.kpis();
   const hist = currentHistory();
-  const b = baselineAt(hist, sim.t);
-  for (const def of KPIS) {
+  const b = mediaEn(hist, sim.t);
+  for (const def of state.op.kpis) {
     const el = document.getElementById(`kpi-${def.id}`);
+    if (!el) continue;
     const v = k[def.id];
-    el.querySelector('.k-value').innerHTML = def.f(v);
-    const bv = b?.[def.baseKey || def.id];
+    el.querySelector('.k-value').innerHTML = def.f(v, k);
+    // Con muy pocos datos (los primeros coches o entregas, el arranque del turno) no se compara.
+    const pocos = (def.minN && !def.minN(k)) || (def.desde && sim.t < def.desde);
+    const bv = pocos ? null : b?.[def.baseKey || def.id];
     const dEl = el.querySelector('.k-delta');
     let alert = false;
     if (v != null && bv != null) {
       const diff = v - bv;
       const isPct = def.unit === 'pp';
       const shown = isPct ? diff * 100 : diff;
-      const small = isPct ? Math.abs(shown) < 0.5 : Math.abs(diff) < Math.max(1, Math.abs(bv) * 0.05);
+      // «≈ media» si la diferencia es pequeña: en p. p., o un mínimo absoluto (minDiff) o un % de la media (tol).
+      const small = isPct ? Math.abs(shown) < 0.5 : Math.abs(diff) < Math.max(def.minDiff ?? 1, Math.abs(bv) * (def.tol ?? 0.05));
       const good = def.up ? diff > 0 : diff < 0;
       const txt = `${shown > 0 ? '▲' : '▼'} ${num(Math.abs(shown), isPct ? 1 : 0)}${isPct ? ppUnit() : def.unit === 'min' ? ' min' : ''} ${tx('vs media', 'vs avg')}`;
       dEl.textContent = small ? tx('≈ media 14 días', '≈ 14-day average') : txt;
@@ -517,72 +638,65 @@ function paintKpis() {
       const rel = Math.abs(diff) / (Math.abs(bv) || 1);
       alert = !small && !good && (isPct ? Math.abs(shown) > 4 : rel > 0.5);
     } else {
-      dEl.textContent = hist ? (v == null ? tx('aún sin rutas salidas', 'no routes out yet') : '') || ' ' : tx('calculando media…', 'computing average…');
+      dEl.textContent = !hist ? tx('calculando media…', 'computing average…') : v == null ? (def.vacio?.() || tx('aún sin datos', 'no data yet')) : pocos ? tx('aún pocos datos', 'not enough data yet') : ' ';
       dEl.className = 'k-delta flat';
     }
     el.classList.toggle('alert', alert);
-    spark(el.querySelector('svg'), sim.hourly, hist, def.id === 'calle' ? 'calle' : def.id);
+    spark(el.querySelector('svg'), sim.hourly, hist, def.baseKey || def.id);
   }
   $('#clock').textContent = fmt(Math.floor(sim.clock ?? sim.t));
   const live = liveTarget();
   $('#live').classList.toggle('replay', live.replay);
   $('#live-label').textContent = live.replay ? tx('EN DIFERIDO', 'REPLAY') : tx('EN VIVO', 'LIVE');
   $('#live').title = live.replay
-    ? tx(`En España son las ${fmt(Math.floor(live.real))}: de noche el almacén no opera y se reproduce el turno de día.`, `It is ${fmt(Math.floor(live.real))} in Spain: the warehouse is closed at night, so the day shift is replayed.`)
+    ? tx(`En España son las ${fmt(Math.floor(live.real))}: de noche no se opera y se reproduce el turno de día.`, `It is ${fmt(Math.floor(live.real))} in Spain: there is no night shift, so the day shift is replayed.`)
     : tx('Hora real de España: la simulación avanza minuto a minuto.', 'Real time in Spain: the simulation runs minute by minute.');
   $('#shift').textContent = live.replay
-    ? `${tx('Turno de día en diferido', 'Day shift replay')} · ${state.site.nombre}`
-    : `${tx('Hora de España', 'Spain time')} · ${state.site.nombre}`;
+    ? `${tx('Turno de día en diferido', 'Day shift replay')} · ${state.op.lugar()}`
+    : `${tx('Hora de España', 'Spain time')} · ${state.op.lugar()}`;
 }
 
 function paintBanner() {
-  const sim = state.sim;
+  const html = state.op.banner(state.sim);
   const el = $('#banner');
-  const activas = sim.incidencias.filter((w) => w.empezo && !w.acabo);
-  let html = '';
-  if (activas.length) {
-    const n = activas.length;
-    const ids = activas.map((w) => w.f.id).join(', ');
-    const h = fmt(Math.max(...activas.map((w) => w.hasta)));
-    html = tx(
-      `<b>${n} ${n > 1 ? 'carretillas' : 'carretilla'} en el taller</b> (${ids}) hasta las ${h}. <button type="button" class="link-btn" data-open-ai>Pregunta a la IA cómo afecta</button>`,
-      `<b>${n} ${n > 1 ? 'forklifts' : 'forklift'} in the workshop</b> (${ids}) until ${h}. <button type="button" class="link-btn" data-open-ai>Ask the AI how it affects the shift</button>`,
-    );
-  } else if (sim.c.sinHueco > 0 && sim.freeLocations() < 3) {
-    html = tx('<b>Nave llena:</b> hay palés en recepción sin hueco donde ubicarlos.', '<b>Warehouse full:</b> there are pallets in receiving with no location to go to.');
-  }
   el.hidden = !html;
   if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
 }
 
 function paintFeed() {
   const ev = state.sim.events;
-  if (ev.length === state.lastEvents) return;
-  state.lastEvents = ev.length;
+  const last = ev[ev.length - 1] || null;
+  if (last === state.lastEvents && state.lastEvents !== null) return;
+  state.lastEvents = last;
   const items = ev.slice(-80).reverse().map((e) => `<li class="${e.nivel}"><time>${fmt(e.t)}</time><span>${esc(e.texto)}</span></li>`).join('');
   $('#feed').innerHTML = items;
   $('#feed-count').textContent = tx(`${ev.length} eventos`, `${ev.length} events`);
 }
 
 function paintBadges() {
-  const n = riskCount(state.sim);
-  const b = document.getElementById('badge-rutas');
-  b.hidden = !n;
-  b.textContent = n;
+  const b = state.op.badges(state.sim);
+  for (const t of state.op.tabs) {
+    const el = document.getElementById(`badge-${t.id}`);
+    if (!el) continue;
+    const n = b[t.id] || 0;
+    el.hidden = !n;
+    el.textContent = n;
+  }
 }
 
-var lastNetwork = -1; // var: ídem
 function refreshAll() {
   paintKpis();
   paintBanner();
   paintFeed();
   paintBadges();
-  chart.render(state.sim, currentHistory());
+  paintTracker();
+  checkToasts();
+  chart.render(state.sim, currentHistory(), state.op.chart);
   renderPanel(false);
   const slot = Math.floor(state.sim.t / 60);
-  if (slot !== lastNetwork) {
-    lastNetwork = slot;
-    paintSiteDots();
+  if (slot !== lastDots) {
+    lastDots = slot;
+    paintDots();
   }
 }
 
@@ -595,38 +709,40 @@ function frame(now) {
   const dt = Math.min(0.1, (now - prev) / 1000);
   prev = now;
   if (state.sim) {
-    // El almacén sigue al reloj real. Si el objetivo queda por detrás (de día a diferido a las
+    // La simulación sigue al reloj real. Si el objetivo queda por detrás (de día a diferido a las
     // 22:00, o de vuelta a las 06:00), se vuelve a simular el día hasta la hora que toca.
     const target = liveTarget().t;
-    const now = state.sim.clock ?? state.sim.t;
-    if (target < now - 1) resetDay(target);
-    else if (target > now) state.sim.advance(Math.min(target - now, 30));
+    const cur = state.sim.clock ?? state.sim.t;
+    if (target < cur - 1) resetDay(target);
+    else if (target > cur) state.sim.advance(Math.min(target - cur, 30));
   }
-  scene.update(dt);
-  scene.render();
+  stage.update(dt);
+  stage.render();
   acc += dt;
   palAcc += dt;
-  if (palAcc > 0.35) { palAcc = 0; scene.refreshPallets(); }
+  if (palAcc > 0.35) { palAcc = 0; state.op?.content.refresh(); }
   if (acc > 0.5) { acc = 0; refreshAll(); }
   requestAnimationFrame(frame);
 }
 
 buildChrome();
 buildChat();
-setMode('operativa');
-setTab('detalle');
-loadSite('zgz').then(async () => {
-  // El resto de almacenes calcula su histórico en segundo plano (para comparar y para los puntos de estado).
-  for (const s of SITES) {
-    if (!state.history.has(s.id)) {
-      state.history.set(s.id, null);
-      state.history.set(s.id, await computeHistory(s, 14));
-    }
+let inicial = OPERATIVAS[0].id;
+try {
+  const q = new URLSearchParams(window.location.search).get('op');
+  if (OPERATIVAS.some((o) => o.id === q)) inicial = q;
+} catch { /* sin window */ }
+loadOp(inicial);
+// El histórico del resto de operativas se calcula en segundo plano (para los puntos de estado).
+setTimeout(async () => {
+  for (const op of OPERATIVAS) {
+    if (state.history.has(op.id)) continue;
+    state.history.set(op.id, null);
+    state.history.set(op.id, await op.historia());
   }
-  lastNetwork = -1;
-  paintSiteDots();
-});
+  lastDots = -1;
+}, 1500);
 requestAnimationFrame(frame);
 
 window.__estiba = state; // para depurar desde la consola
-window.__scene = scene;
+window.__stage = stage;

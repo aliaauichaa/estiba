@@ -2,7 +2,7 @@
 // Solo se activa si se define VITE_ESTIBA_API al compilar. El modelo recibe el diagnóstico ya
 // calculado y la respuesta local; no inventa datos porque no tiene otros.
 
-import { diagnose, accionesDisponibles, answerLocal } from './assistant.js';
+import { diagnose, accionesDisponibles } from './assistant.js';
 import { fmt } from '../sim/engine.js';
 import { lang, placeName } from '../i18n.js';
 
@@ -13,6 +13,7 @@ export function contexto(ctx) {
   const k = d.k;
   const round = (v, n = 3) => (v == null ? null : Number(v.toFixed(n)));
   return {
+    operativa: 'almacen',
     almacen: `${ctx.sim.site.nombre} (${ctx.sim.site.zona})`,
     hora: fmt(ctx.sim.t),
     indicadores: {
@@ -33,14 +34,15 @@ export function contexto(ctx) {
   };
 }
 
-export async function answerRemote(question, ctx, local, historial = []) {
+// payload: { contexto, respuestaBase } de la operativa activa (cada una arma el suyo).
+export async function answerRemote(question, { contexto: datos, respuestaBase }, historial = []) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 20000);
   try {
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ idioma: lang, pregunta: question, contexto: contexto(ctx), respuestaBase: answerLocal(question, ctx, { sinAcciones: true }), historial: historial.slice(-6) }),
+      body: JSON.stringify({ idioma: lang, pregunta: question, contexto: datos, respuestaBase, historial: historial.slice(-6) }),
       signal: ctrl.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);

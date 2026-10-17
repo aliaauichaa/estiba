@@ -3,7 +3,7 @@
 // Los casos de desvío salen de la revisión del 07-10-2026 (fallaban en los dos sentidos).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clasificar, esPreguntaSobreAli } from '../lambda/asistente/ruta.mjs';
+import { clasificar, esPreguntaSobreAli, promptClasificador } from '../lambda/asistente/ruta.mjs';
 import { responderSobreAli, mensajesDe, temaDe } from '../lambda/asistente/ali.mjs';
 import { md } from '../src/ui/md.js';
 import { SITES } from '../src/data/sites.js';
@@ -58,12 +58,56 @@ const TURNO = [
   'Which SKUs in the portfolio are class A?', 'Who created this order?', '¿Qué trayectoria sigue la carretilla C-04?',
   '¿Debo contactar con el transportista de Huesca?', '¿Cuál es el teléfono del transportista de Teruel?', 'What is the fill rate?', 'Hola',
   '¿Ha estado parada la carretilla 3?',
+  // Automoción y última milla.
+  '¿Por qué se para la línea?', 'Why does the line stop?', '¿Qué proveedores Tier 2 están en riesgo?', '¿Cuántos coches llevamos?',
+  '¿Qué pasaría con el plan B?', '¿Llega a tiempo la lanzadera de asientos?', '¿Cómo va el sorter?', '¿Qué delegaciones van justas?',
+  'Why are parcels missing their wave?', '¿Cuántos bultos de Zara quedan por clasificar?', '¿Llega Gousto a tiempo?', '¿Cuántos conductores hay en ruta?',
 ];
 // Con hilo (la respuesta anterior era sobre Ali), en la web sin modelo.
 const SOBRE_ALI_TRAS_ALI = ['¿Es junior o senior?', '¿Qué nivel tiene?', 'and before that?', '¿y él qué hacía antes?', '¿Y sus estudios?',
-  '¿Ha gestionado almacenes?', '¿Qué hizo en el almacén de Alemania?', '¿Tiene experiencia en almacenes?'];
+  '¿Ha gestionado almacenes?', '¿Qué hizo en el almacén de Alemania?', '¿Tiene experiencia en almacenes?',
+  '¿Qué carrera estudió?', '¿Y su cargo?', '¿Tiene carnet de conducir?', '¿Qué tal le van sus proyectos?', '¿Qué apps tiene en producción?',
+  '¿Qué paquete salarial pide?', '¿Ha trabajado en paquetería?', '¿Y en última milla?', 'And in last mile?',
+  '¿Qué experiencia tiene en última milla?', '¿Qué experiencia tiene en reparto?', '¿Qué paquete pide?', '¿Está en la línea de lo que buscamos?',
+  '¿Ha llevado la planificación de la producción?', '¿Trabajó en una campa de vehículos?', '¿Era un conductor o el jefe de tráfico?'];
+// Palabras de entrevista que se parecen al vocabulario nuevo (carrera, cargo, career…): nunca van al turno.
+const NUNCA_TURNO = ['What about his career?', 'Háblame de su carrera', '¿Cuál es su carrera profesional?', 'What are his career goals?',
+  '¿Qué carrera estudió?', '¿Cuál es su cargo actual?', '¿Tiene carnet de conducir?', '¿Qué módulos cursó?', 'Has he worked in e-commerce?',
+  '¿Ha trabajado en última milla?', '¿Trabajó con Zara en Paack?', 'Is he available to start soon?', '¿Ha sido conductor?', 'Was he a driver?',
+  '¿Qué experiencia tiene en última milla?', '¿Qué experiencia tiene en reparto?', '¿Qué módulos de SAP conoce?'];
+// Sugerencias de automoción y última milla tras hablar de Ali: son del turno.
+const TURNO_NUEVAS_TRAS_ALI = ['¿Cómo va la producción?', '¿Por qué se para la línea?', 'Why does the line stop?', 'How is production going?',
+  '¿Qué proveedores están en riesgo?', '¿Qué pasaría con el plan B?', '¿Por qué hay bultos que pierden su ola?', '¿Qué delegaciones van justas?',
+  'Why are parcels missing their wave?', '¿Está parada la línea?', '¿Dónde está el paquete ZR-916415?', '¿Qué le pasa a OF-000134?',
+  // Palabras de la propia interfaz, en preguntas libres.
+  '¿Qué módulo va más justo?', '¿Qué cobertura tienen los módulos?', '¿Hay coches en campa?', '¿Cuántos vehículos se han montado?',
+  '¿Qué conductor va peor?', '¿Cuántos entregados llevamos?', '¿Dónde está mi paquete?', '¿Cuánto lleva la clasificación?',
+  'Which module is tightest?', 'Which driver is worst?', 'How many delivered so far?', 'Which van is late?', '¿Estuvo parada la línea?',
+  '¿Quién está detrás del paro de la línea?', '¿Quién está detrás del atasco del sorter?'];
 const TURNO_TRAS_ALI = ['¿Cómo va el día?', '¿Cuál es el cuello de botella?', '¿Y el OTIF?', '¿Qué pasa con el pasillo 4?',
-  '¿Y el SKU más vendido?', '¿Y lo de Huesca?', '¿Qué hago ahora mismo?', 'Hola', '¿Y Teruel?', '¿Cuántos palés quedan para Huesca?'];
+  '¿Y el SKU más vendido?', '¿Y lo de Huesca?', '¿Qué hago ahora mismo?', 'Hola', '¿Y Teruel?', '¿Cuántos palés quedan para Huesca?',
+  '¿Y en el muelle 3?', '¿Y con las carretillas?', '¿Y en el taller?', 'And in the warehouse?',
+  '¿Y en expedición cómo vamos?', '¿Y con OTIF?', '¿Y en muelles?', 'And in dispatch, how are we doing?'];
+
+test('el vocabulario de las operativas nuevas no se come las preguntas de reclutador', () => {
+  for (const q of NUNCA_TURNO) assert.notEqual(clasificar(q, [], {}), 'turno', q);
+  for (const q of NUNCA_TURNO) assert.equal(esPreguntaSobreAli(q, HIST_ALI, {}), true, q);
+  for (const q of TURNO_NUEVAS_TRAS_ALI) assert.equal(esPreguntaSobreAli(q, HIST_ALI, {}), false, q);
+});
+
+test('la Lambda reconoce plantas y delegaciones en el contexto completo de cada operativa', async () => {
+  const { runAutoDay } = await import('../src/sim/automocion.js');
+  const { runMillaDay } = await import('../src/sim/ultimamilla.js');
+  const { contextoAuto } = await import('../src/analysis/asistenteAuto.js');
+  const { contextoMilla } = await import('../src/analysis/asistenteMilla.js');
+  const auto = contextoAuto({ sim: runAutoDay(0), history: null });
+  const milla = contextoMilla({ sim: runMillaDay(0), history: null });
+  for (const q of ['¿Y la Acería?', '¿Qué pasa con Electrónica?', '¿Y Asientos?']) assert.equal(clasificar(q, HIST_ALI, auto), 'turno', q);
+  for (const q of ['¿Y Toledo?', 'What about Cuenca?', '¿Y Segovia?']) assert.equal(clasificar(q, HIST_ALI, milla), 'turno', q);
+  assert.match(promptClasificador('¿Y Toledo?', HIST_ALI, milla), /nombres que aparecen en ella: .*Toledo/);
+  // El cuerpo que manda la web cabe con holgura en el tope de 24.000 caracteres de la Lambda.
+  for (const c of [auto, milla]) assert.ok(JSON.stringify(c).length < 12000, JSON.stringify(c).length);
+});
 
 test('las preguntas sobre Ali van a la ficha y las del turno no (también como seguimiento)', () => {
   for (const q of SOBRE_ALI) assert.equal(clasificar(q, [], CTX), 'ali', q);
@@ -79,7 +123,7 @@ test('las dudosas las decide el modelo en la Lambda; si falla, el hilo de la con
   assert.equal(await temaDe('¿Qué nivel tiene?', HIST_ALI, async (b) => { pedido = b; return { content: [{ type: 'text', text: 'ali' }] }; }, CTX), 'ali');
   assert.equal(pedido.max_tokens, 5);
   assert.match(pedido.messages[0].content, /Respuesta anterior del asistente/);
-  assert.match(pedido.messages[0].content, /destinos de sus rutas: Huesca, Pamplona, Teruel/);
+  assert.match(pedido.messages[0].content, /nombres que aparecen en ella: Huesca, Pamplona, Teruel/);
   assert.equal(await temaDe('¿Tiene experiencia en almacenes?', [], async () => ({ content: [{ type: 'text', text: 'Turno' }] }), CTX), 'turno');
   assert.equal(await temaDe('¿Qué nivel tiene?', HIST_ALI, async () => { throw new Error('caído'); }), 'ali');
   assert.equal(await temaDe('¿Qué nivel tiene?', [], async () => { throw new Error('caído'); }), 'turno');
@@ -89,7 +133,7 @@ test('las dudosas las decide el modelo en la Lambda; si falla, el hilo de la con
 });
 
 test('sin Lambda, la pregunta sobre Ali tiene una presentación fija con su LinkedIn (también como seguimiento)', async () => {
-  const s = SITES.find((x) => x.id === 'mad');
+  const s = SITES.find((x) => x.id === 'zgz');
   const ctx = { sim: runDay(s, 0), history: await computeHistory(s, 2), opt: null };
   const r = answerLocal('¿Quién ha creado Estiba?', ctx);
   assert.match(r, /Ali Aauicha Azghouli/);

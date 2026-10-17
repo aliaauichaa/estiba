@@ -1,12 +1,14 @@
-// Escena 3D de la nave con Three.js: estanterías, palés por hueco, calles de muelle,
-// carretillas que siguen las rutas calculadas por el motor y camiones en patio y muelle.
+// Contenido 3D de la operativa de almacén (va montado sobre el escenario de stage.js): estanterías,
+// palés por hueco, calles de muelle, carretillas que siguen las rutas calculadas por el motor y
+// camiones en patio y muelle.
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { DIM } from '../sim/layout.js';
-import { trackPos } from '../sim/engine.js';
-import { tx, placeName } from '../i18n.js';
+import { trackPos, fmt } from '../sim/engine.js';
+import { tx, pct, placeName } from '../i18n.js';
+import { std, disposeTree, progressLabel } from './stage.js';
+import { routeStatus } from '../analysis/assistant.js';
 
 const COL = {
   bg: 0x0d1117,
@@ -43,10 +45,6 @@ const ZONAS = {
 
 const FORK_SCALE = 1.3;
 
-function std(color, extra = {}) {
-  return new THREE.MeshStandardMaterial({ color, roughness: 0.8, metalness: 0.05, ...extra });
-}
-
 function label(text, cls) {
   const el = document.createElement('div');
   el.className = `label3d ${cls}`;
@@ -61,63 +59,28 @@ function heat(v, out) {
 }
 
 export class WarehouseScene {
-  constructor(el, { onSelect } = {}) {
-    this.el = el;
-    this.onSelect = onSelect || (() => {});
+  constructor() {
     this.mode = 'operativa';
     this.selected = null;
-
-    const r = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    r.outputColorSpace = THREE.SRGBColorSpace;
-    r.toneMapping = THREE.ACESFilmicToneMapping;
-    r.toneMappingExposure = 1.05;
-    r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
-    el.appendChild(r.domElement);
-    this.renderer = r;
-
-    const lr = new CSS2DRenderer();
-    lr.domElement.style.position = 'absolute';
-    lr.domElement.style.inset = '0';
-    lr.domElement.style.pointerEvents = 'none';
-    el.appendChild(lr.domElement);
-    this.labelRenderer = lr;
-
-    this.scene = new THREE.Scene();
-    this.scene.background = null;
-    this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -500, 1000);
-    this.controls = new OrbitControls(this.camera, r.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.screenSpacePanning = true;
-    this.controls.minPolarAngle = 0.25;
-    this.controls.maxPolarAngle = 1.25;
-    this.controls.minZoom = 0.5;
-    this.controls.maxZoom = 6;
-    this.controls.zoomToCursor = true;
-    this.controls.addEventListener('start', () => { this.userMoved = true; });
-
-    this.scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a1f26, 1.25));
-    const sun = new THREE.DirectionalLight(0xfff4e6, 1.9);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    sun.shadow.bias = -0.0005;
-    sun.shadow.normalBias = 0.04;
-    this.sun = sun;
-    this.scene.add(sun, sun.target);
-
-    this.root = new THREE.Group();
-    this.scene.add(this.root);
-    this.raycaster = new THREE.Raycaster();
     this._tmpM = new THREE.Matrix4();
     this._tmpC = new THREE.Color();
     this._tmpV = new THREE.Vector3();
     this._q = new THREE.Quaternion();
+  }
 
-    this._bindPointer();
-    this._ro = new ResizeObserver(() => this.resize());
-    this._ro.observe(el);
+  get modes() { return MODES; }
+
+  mount(stage) {
+    this.stage = stage;
+    this.root = new THREE.Group();
+    stage.scene.add(this.root);
+  }
+
+  unmount() {
+    for (const ch of [...this.root.children]) disposeTree(ch);
+    this.root.clear();
+    this.stage.scene.remove(this.root);
+    this.sim = null;
   }
 
   // ------------------------------------------------------------------ montaje
@@ -126,7 +89,7 @@ export class WarehouseScene {
     this.sim = sim;
     const L = sim.L;
     this.L = L;
-    for (const ch of [...this.root.children]) this._disposeTree(ch);
+    for (const ch of [...this.root.children]) disposeTree(ch);
     this.root.clear();
     this.forks = new Map();
     this.trucks = new Map();
@@ -139,72 +102,28 @@ export class WarehouseScene {
     this._buildLanes();
     this._buildLabels(L);
     for (const f of sim.forklifts) this._addForklift(f);
-
-    const cx = L.W / 2;
-    const cz = (L.D - 16) / 2;
-    this.target = new THREE.Vector3(cx, 0, cz);
-    const span = Math.max(L.W, L.D + 30);
-    this.sun.position.set(cx - span * 0.4, span * 0.9, cz - span * 0.6);
-    this.sun.target.position.copy(this.target);
-    const sc = this.sun.shadow.camera;
-    sc.left = -span * 0.75; sc.right = span * 0.75; sc.top = span * 0.75; sc.bottom = -span * 0.75;
-    sc.near = 1; sc.far = span * 3;
-    sc.updateProjectionMatrix();
-
-    this.resetView();
     this.refreshPallets();
   }
 
-  resetView() {
+  // Caja que tiene que entrar en pantalla en la vista general: nave y patio.
+  bounds() {
     const L = this.L;
-    if (!L) return;
-    this.userMoved = false;
-    const dir = (this.viewDir || new THREE.Vector3(0.5, 0.95, -1.0)).clone().normalize();
-    this.camera.position.copy(this.target).addScaledVector(dir, 200);
-    this.camera.up.set(0, 1, 0);
-    this.controls.target.copy(this.target);
-    this.camera.zoom = 1;
-    this._frustum(1);
-    this.camera.lookAt(this.target);
-    this.camera.updateMatrixWorld();
-    // Ajusta el zoom para que entren la nave y el patio.
-    const pts = [];
-    for (const x of [0, L.W]) for (const z of [-15, L.D]) for (const y of [0, 7]) pts.push(new THREE.Vector3(x, y, z));
-    let m = 0;
-    for (const p of pts) {
-      p.project(this.camera);
-      m = Math.max(m, Math.abs(p.x), Math.abs(p.y));
-    }
-    this.camera.zoom = 0.97 / m;
-    this.camera.updateProjectionMatrix();
-    this.controls.update();
+    return { min: { x: 0, y: 0, z: -15 }, max: { x: L.W, y: 7, z: L.D } };
   }
 
-  _frustum(h) {
-    const w = this.el.clientWidth || 1;
-    const hh = this.el.clientHeight || 1;
-    const a = w / hh;
-    const size = Math.max(this.L ? this.L.W : 60, this.L ? this.L.D + 30 : 60) * 0.5 * h;
-    this.camera.left = -size * a;
-    this.camera.right = size * a;
-    this.camera.top = size;
-    this.camera.bottom = -size;
-    this.camera.updateProjectionMatrix();
-  }
-
-  resize() {
-    const w = this.el.clientWidth;
-    const h = this.el.clientHeight;
-    if (!w || !h) return;
-    this.renderer.setSize(w, h, false);
-    this.renderer.domElement.style.width = `${w}px`;
-    this.renderer.domElement.style.height = `${h}px`;
-    this.labelRenderer.setSize(w, h);
-    if (this.L) {
-      // Mientras el usuario no haya movido la cámara, se reencuadra al cambiar el tamaño.
-      if (this.userMoved) this._frustum(1);
-      else this.resetView();
-    }
+  // Encuadres de la barra «Cámara».
+  views() {
+    const L = this.L;
+    const span = (docks) => [Math.min(...docks.map((d) => d.x)) - 6, Math.max(...docks.map((d) => d.x)) + 6];
+    const [ix0, ix1] = span(L.inDocks);
+    const [ox0, ox1] = span(L.outDocks);
+    return [
+      { id: 'general', nombre: tx('General', 'Overview'), box: this.bounds() },
+      { id: 'rec', nombre: tx('Recepción', 'Receiving'), box: { min: { x: ix0, y: 0, z: -22 }, max: { x: ix1, y: 5, z: 14 } } },
+      { id: 'racks', nombre: tx('Estanterías', 'Racking'), box: { min: { x: 2, y: 0, z: DIM.Z_RACK0 - 2 }, max: { x: L.W - 2, y: 7, z: L.D - 2 } } },
+      { id: 'exp', nombre: tx('Expedición', 'Dispatch'), box: { min: { x: ox0, y: 0, z: -22 }, max: { x: ox1, y: 5, z: 14 } } },
+      { id: 'patio', nombre: tx('Patio', 'Yard'), box: { min: { x: 0, y: 0, z: -40 }, max: { x: L.W, y: 4, z: 0 } } },
+    ];
   }
 
   _buildGround(L) {
@@ -416,12 +335,7 @@ export class WarehouseScene {
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), new THREE.MeshBasicMaterial({ color: COL.amber }));
     beacon.position.set(0, 1.95, -0.1);
     g.add(beacon);
-    const ring = new THREE.Mesh(new THREE.RingGeometry(1.25, 1.5, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 }));
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.04;
-    ring.visible = false;
-    g.add(ring);
-    const lab = label(f.id, 'fork');
+    const lab = label('', 'fork');
     lab.position.set(0, 2.5, 0);
     g.add(lab);
 
@@ -429,7 +343,7 @@ export class WarehouseScene {
     g.position.set(f.x, 0, f.z);
     g.userData = { kind: 'forklift', id: f.id };
     this.root.add(g);
-    this.forks.set(f.id, { g, carriage, loadBox, beacon, ring, lab, heading: 0 });
+    this.forks.set(f.id, { g, carriage, loadBox, beacon, lab, setLab: progressLabel(lab.element), heading: 0 });
   }
 
   _makeTruck(kind) {
@@ -589,9 +503,16 @@ export class WarehouseScene {
       o.beacon.material.color.setHex(taller ? COL.red : tipo === 'picking' ? COL.teal : tipo === 'ubicacion' ? COL.blue : 0x7a6a40);
       o.carriage.position.y = p.stop && tipo === 'ubicacion' && f.task.dest && f.track && t > (firstStop?.t ?? Infinity) + 0.2
         ? Math.min(f.task.dest.level * DIM.LEVEL_H, 4.5) / FORK_SCALE * 0.9 : 0;
+      const sel = this.selected?.kind === 'forklift' && this.selected.id === f.id;
       o.lab.element.classList.toggle('taller', !!taller);
-      o.lab.element.classList.toggle('sel', this.selected?.kind === 'forklift' && this.selected.id === f.id);
-      o.ring.visible = this.selected?.kind === 'forklift' && this.selected.id === f.id;
+      o.lab.element.classList.toggle('sel', sel);
+      // Etiqueta con el avance de la tarea; seleccionada, dice además qué está haciendo.
+      const frac = f.track && (tipo === 'picking' || tipo === 'ubicacion') ? Math.min(1, (t - f.track[0].t) / Math.max(0.01, f.endT - f.track[0].t)) : null;
+      let txt = f.id;
+      if (sel && tipo === 'picking') txt = `${f.id} · ${f.task.pedido.id} · ${pct(frac ?? 0, 0)}`;
+      else if (sel && tipo === 'ubicacion') txt = `${f.id} · ${tx('a', 'to')} ${f.task.dest.id} · ${pct(frac ?? 0, 0)}`;
+      else if (sel && taller) txt = `${f.id} · ${tx('taller', 'workshop')}`;
+      o.setLab(txt, frac, tipo === 'picking' ? 'teal' : 'blue');
     }
     this._updateTrucks(t, dtReal);
     this._updatePath(t);
@@ -605,11 +526,10 @@ export class WarehouseScene {
       g.userData = { kind: 'truck', id: key };
       this.root.add(g);
       o = { g, seen: true };
-      if (kind === 'salida') {
-        o.lab = label('', 'dock');
-        o.lab.position.set(0, 4.2, -13.9);
-        g.add(o.lab);
-      }
+      o.lab = label('', kind === 'salida' ? 'dock truck-out' : 'dock truck-in');
+      o.lab.position.set(0, 4.2, kind === 'salida' ? -13.9 : -6.2);
+      g.add(o.lab);
+      o.setLab = progressLabel(o.lab.element);
       this.trucks.set(key, o);
     }
     o.seen = true;
@@ -631,32 +551,39 @@ export class WarehouseScene {
       const z = -20 - Math.floor(i / 12) * 15;
       const o = this._truckObj(`in-${tr.id}`, 'entrada', new THREE.Vector3(x, 0, z - 40));
       place(o, x, z);
+      const espera = t - tr.tPatio;
+      o.setLab(`${tr.matricula} · ${Math.round(espera)} min`, Math.min(1, espera / 45), espera > 45 ? 'bad' : 'warn');
     });
     for (const d of L.inDocks) {
       if (!d.truck) continue;
-      const o = this._truckObj(`in-${d.truck.id}`, 'entrada', new THREE.Vector3(d.x, 0, -40));
+      const tr = d.truck;
+      const o = this._truckObj(`in-${tr.id}`, 'entrada', new THREE.Vector3(d.x, 0, -40));
       place(o, d.x, -0.45);
+      o.setLab(`${tr.matricula} · ${tr.descargados}/${tr.pales.length}`, tr.descargados / tr.pales.length, sim.lanes[d.id].length >= sim.site.capCalle ? 'bad' : 'blue');
     }
     for (const lv of sim.leaving) {
       const o = this.trucks.get(`in-${lv.truck.id}`);
       if (!o) continue;
       o.seen = true;
       place(o, lv.dock.x, -0.45 - (t - lv.t) * 9);
+      o.setLab(lv.truck.matricula, null);
     }
+    const estados = new Map(routeStatus(sim).map((r) => [r.ro, r.estado]));
     for (const ro of sim.routes) {
       if (!ro.camion) continue;
       const since = ro.salio ? t - ro.salida : -1;
       if (since > 9) continue;
       const o = this._truckObj(`out-${ro.id}`, 'salida', new THREE.Vector3(ro.dock.x, 0, -45));
       place(o, ro.dock.x, since < 0 ? -0.45 : -0.45 - since * 9);
-      if (o.lab) {
-        const ready = ro.pedidos.filter((p) => p.estado === 'preparado' || p.estado === 'expedido').length;
-        o.lab.element.textContent = `${placeName(ro.destino)} · ${ready}/${ro.pedidos.length}`;
-      }
+      const ready = ro.pedidos.filter((p) => p.estado === 'preparado' || (p.estado === 'expedido' && p.aTiempo)).length;
+      const est = estados.get(ro);
+      const tone = est === 'riesgo' || est === 'salio-tarde' ? 'bad' : est === 'justa' ? 'warn' : 'teal';
+      o.setLab(`${placeName(ro.destino)} · ${fmt(ro.salida)} · ${ready}/${ro.pedidos.length}`, ro.pedidos.length ? ready / ro.pedidos.length : 0, tone);
     }
+    for (const [key, o] of this.trucks) o.lab?.element.classList.toggle('sel', this.selected?.kind === 'truck' && this.selected.id === key);
     for (const [key, o] of this.trucks) {
       if (!o.seen) {
-        this._disposeTree(o.g);
+        disposeTree(o.g);
         this.root.remove(o.g);
         this.trucks.delete(key);
       }
@@ -671,7 +598,7 @@ export class WarehouseScene {
       track = f?.track || null;
     }
     if (this.pathLine && this.pathLine.userData.track !== track) {
-      this._disposeTree(this.pathLine);
+      disposeTree(this.pathLine);
       this.root.remove(this.pathLine);
       this.pathLine = null;
     }
@@ -694,46 +621,39 @@ export class WarehouseScene {
     this.root.add(grp);
   }
 
-  render() {
-    this.controls.update();
-    this.renderer.render(this.scene, this.camera);
-    this.labelRenderer.render(this.scene, this.camera);
+  refresh() {
+    this.refreshPallets();
   }
 
   select(sel) {
     this.selected = sel;
   }
 
-  // ------------------------------------------------------------------ interacción
-
-  _bindPointer() {
-    const el = this.renderer.domElement;
-    let down = null;
-    el.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
-    el.addEventListener('pointerup', (e) => {
-      if (!down) return;
-      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
-      down = null;
-      if (moved > 5) return;
-      const hit = this._pick(e);
-      this.onSelect(hit);
-    });
-    let last = 0;
-    el.addEventListener('pointermove', (e) => {
-      const now = performance.now();
-      if (now - last < 90 || e.buttons) return;
-      last = now;
-      el.style.cursor = this._pick(e) ? 'pointer' : 'grab';
-    });
+  // Dónde está lo seleccionado, para el anillo, el vuelo de la cámara y el seguimiento.
+  focusOf(sel) {
+    const sim = this.sim;
+    if (!sim || !sel) return null;
+    if (sel.kind === 'forklift') {
+      const o = this.forks.get(sel.id);
+      return o ? { pos: o.g.position, radius: 2.2, follow: true, zoom: 3 } : null;
+    }
+    if (sel.kind === 'truck') {
+      const o = this.trucks.get(sel.id);
+      return o ? { pos: { x: o.g.position.x, y: 2, z: o.g.position.z - 7 }, radius: 8, zoom: 2.2 } : null;
+    }
+    if (sel.kind === 'location') {
+      const loc = sim.L.locations[sel.id];
+      if (!loc) return null;
+      const y = loc.level === 0 ? 0 : loc.level * DIM.LEVEL_H + 0.13;
+      return { pos: { x: loc.rx, y: y + DIM.LEVEL_H / 2, z: loc.z }, radius: 1.7, zoom: 3.2, box: { x: DIM.RACK_D + 0.2, y: DIM.LEVEL_H, z: DIM.BAY_L } };
+    }
+    return null;
   }
 
-  _pick(e) {
+  pick(raycaster) {
     if (!this.sim) return null;
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.camera);
     const targets = [...[...this.forks.values()].map((o) => o.g), ...[...this.trucks.values()].map((o) => o.g), this.palletLoad];
-    const hits = this.raycaster.intersectObjects(targets, true);
+    const hits = raycaster.intersectObjects(targets, true);
     for (const h of hits) {
       let o = h.object;
       if (o === this.palletLoad && h.instanceId != null) {
@@ -745,13 +665,5 @@ export class WarehouseScene {
       if (o?.userData.kind === 'forklift' || o?.userData.kind === 'truck') return { kind: o.userData.kind, id: o.userData.id };
     }
     return null;
-  }
-
-  _disposeTree(obj) {
-    obj.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => m.dispose());
-      if (o.isCSS2DObject && o.element?.parentNode) o.element.parentNode.removeChild(o.element);
-    });
   }
 }

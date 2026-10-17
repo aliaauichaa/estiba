@@ -1,5 +1,6 @@
-// Gráfica del turno en SVG: líneas preparadas por hora (barras), OTIF acumulado y equipos operativos,
-// con la media de los 14 días anteriores como referencia.
+// Gráfica del turno en SVG, con la media de los 14 días anteriores como referencia. Cada operativa dice
+// qué pinta (config): barras por hora (bars), un porcentaje acumulado con su eje a la derecha (pct) y
+// una línea de recursos (line); en el almacén, líneas preparadas, OTIF y carretillas operativas.
 
 import { tx, num, pct } from '../i18n.js';
 
@@ -14,6 +15,22 @@ export const chartLegend = () => [
   { color: '#6c9cf0', label: tx('Carretillas operativas', 'Forklifts in service') },
 ];
 
+// Configuración del almacén (la de siempre).
+export const CHART_ALMACEN = {
+  legend: chartLegend,
+  bars: 'lineas',
+  pct: 'otif',
+  line: 'equipos',
+  lineMax: (sim) => sim.forklifts.length,
+  tip: (r, b) => [
+    `${tx('Líneas', 'Lines')}: ${r.lineas} (${tx('media', 'avg')} ${b ? num(b.lineas) : '—'})`,
+    `OTIF: ${pct(r.otif)} (${tx('media', 'avg')} ${pct(b?.otif)})`,
+    `${tx('Carretillas', 'Forklifts')}: ${num(r.equipos, 1)}`,
+    `${tx('Palés en calles', 'Pallets in lanes')}: ${num(r.calle)}`,
+  ],
+  tipBase: (b) => `${tx('Media', 'Average')}: ${b ? num(b.lineas) : '—'} ${tx('líneas', 'lines')} · OTIF ${pct(b?.otif)}`,
+};
+
 export class ShiftChart {
   constructor(el) {
     this.el = el;
@@ -27,9 +44,11 @@ export class ShiftChart {
     this.svg.addEventListener('pointerleave', () => { this.tip.hidden = true; this._hl?.setAttribute('opacity', 0); });
   }
 
-  render(sim, history) {
+  render(sim, history, cfg = CHART_ALMACEN) {
     this.sim = sim;
     this.history = history;
+    this.cfg = cfg;
+    const { bars, pct: pf, line: lf } = cfg;
     const w = this.el.clientWidth || 600;
     const h = this.el.clientHeight || 170;
     this.w = w;
@@ -44,10 +63,11 @@ export class ShiftChart {
     const today = new Map(sim.hourly.map((r) => [r.hora, r]));
     const base = history?.hourly;
     let maxL = 10;
-    for (const r of sim.hourly) maxL = Math.max(maxL, r.lineas);
-    if (base) for (const [, r] of base) maxL = Math.max(maxL, r.lineas || 0);
-    maxL = Math.ceil(maxL / 20) * 20;
-    const nF = sim.forklifts.length;
+    for (const r of sim.hourly) maxL = Math.max(maxL, r[bars] || 0);
+    if (base) for (const [, r] of base) maxL = Math.max(maxL, r[bars] || 0);
+    const paso = maxL > 400 ? 200 : maxL > 100 ? 40 : 20;
+    maxL = Math.ceil(maxL / paso) * paso;
+    const nF = cfg.lineMax(sim) || 1;
     const x = (hora) => pad.l + (hora - H0) * bw;
     const yL = (v) => pad.t + ih - (v / maxL) * ih;
     const yP = (v) => pad.t + ih - ((v - 0.5) / 0.5) * ih; // OTIF de 50 % a 100 %
@@ -57,29 +77,30 @@ export class ShiftChart {
     for (let k = 0; k <= 4; k++) {
       const yy = pad.t + (ih * k) / 4;
       parts.push(`<line x1="${pad.l}" x2="${w - pad.r}" y1="${yy}" y2="${yy}" stroke="#273140" stroke-width="1"/>`);
-      parts.push(`<text x="${pad.l - 6}" y="${yy + 3}" text-anchor="end" fill="#5d6a7d" font-size="10" font-family="JetBrains Mono, monospace">${Math.round(maxL * (1 - k / 4))}</text>`);
-      parts.push(`<text x="${w - pad.r + 6}" y="${yy + 3}" fill="#2ec4b6" font-size="10" font-family="JetBrains Mono, monospace" opacity="0.8">${Math.round(100 - 50 * (k / 4))}%</text>`);
+      const v = Math.round(maxL * (1 - k / 4));
+      parts.push(`<text x="${pad.l - 6}" y="${yy + 3}" text-anchor="end" fill="#5d6a7d" font-size="10" font-family="JetBrains Mono, monospace">${v >= 1000 ? `${num(v / 1000, 1)}k` : v}</text>`);
+      parts.push(`<text x="${w - pad.r + 6}" y="${yy + 3}" fill="#2ec4b6" font-size="10" font-family="JetBrains Mono, monospace" opacity="0.8">${pct((100 - 50 * (k / 4)) / 100, 0)}</text>`);
     }
     for (let hh = H0; hh <= H1; hh += 2) {
       parts.push(`<text x="${x(hh)}" y="${h - 5}" text-anchor="middle" fill="#5d6a7d" font-size="10" font-family="JetBrains Mono, monospace">${String(hh).padStart(2, '0')}h</text>`);
     }
     for (let hh = H0; hh < H1; hh++) {
       const b = base?.get(hh);
-      if (b?.lineas != null) {
-        parts.push(`<rect x="${x(hh) + bw * 0.12}" y="${yL(b.lineas)}" width="${bw * 0.76}" height="${pad.t + ih - yL(b.lineas)}" fill="none" stroke="#5d6a7d" stroke-dasharray="3 2" rx="2"/>`);
+      if (b?.[bars] != null) {
+        parts.push(`<rect x="${x(hh) + bw * 0.12}" y="${yL(b[bars])}" width="${bw * 0.76}" height="${pad.t + ih - yL(b[bars])}" fill="none" stroke="#5d6a7d" stroke-dasharray="3 2" rx="2"/>`);
       }
       const r = today.get(hh);
-      if (r) parts.push(`<rect x="${x(hh) + bw * 0.2}" y="${yL(r.lineas)}" width="${bw * 0.6}" height="${pad.t + ih - yL(r.lineas)}" fill="#f5a524" opacity="0.85" rx="2"/>`);
+      if (r) parts.push(`<rect x="${x(hh) + bw * 0.2}" y="${yL(r[bars] || 0)}" width="${bw * 0.6}" height="${pad.t + ih - yL(r[bars] || 0)}" fill="#f5a524" opacity="0.85" rx="2"/>`);
     }
     const line = (pts, color, dash = '', width = 2) => (pts.length > 1
       ? `<polyline points="${pts.map((p) => p.join(',')).join(' ')}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linejoin="round" ${dash ? `stroke-dasharray="${dash}"` : ''}/>` : '');
     const mid = (hh) => x(hh) + bw / 2;
     const baseOt = [];
-    if (base) for (let hh = H0; hh < H1; hh++) { const b = base.get(hh); if (b?.otif != null) baseOt.push([mid(hh), yP(Math.max(0.5, b.otif))]); }
+    if (base) for (let hh = H0; hh < H1; hh++) { const b = base.get(hh); if (b?.[pf] != null) baseOt.push([mid(hh), yP(Math.max(0.5, b[pf]))]); }
     parts.push(line(baseOt, '#2ec4b6', '4 3', 1.5).replace('<polyline', '<polyline opacity="0.5"'));
-    const ot = sim.hourly.filter((r) => r.otif != null).map((r) => [mid(r.hora), yP(Math.max(0.5, r.otif))]);
+    const ot = sim.hourly.filter((r) => r[pf] != null).map((r) => [mid(r.hora), yP(Math.max(0.5, r[pf]))]);
     parts.push(line(ot, '#2ec4b6', '', 2.2));
-    const eq = sim.hourly.map((r) => [mid(r.hora), yE(r.equipos)]);
+    const eq = sim.hourly.filter((r) => r[lf] != null).map((r) => [mid(r.hora), yE(Math.min(nF, r[lf]))]);
     parts.push(line(eq, '#6c9cf0', '', 1.6));
     for (const p of ot) parts.push(`<circle cx="${p[0]}" cy="${p[1]}" r="2.6" fill="#2ec4b6"/>`);
     const now = Math.min(H1, sim.t / 60);
@@ -98,15 +119,9 @@ export class ShiftChart {
     if (hora < H0 || hora >= H1) { this.tip.hidden = true; return; }
     const r = this.sim.hourly.find((x) => x.hora === hora);
     const b = this.history?.hourly.get(hora);
-    const p = (v) => pct(v);
-    const avg = tx('media', 'avg');
     const lines = [`<b>${String(hora).padStart(2, '0')}:00–${String(hora + 1).padStart(2, '0')}:00</b>`];
-    if (r) {
-      lines.push(`${tx('Líneas', 'Lines')}: ${r.lineas} (${avg} ${b ? num(b.lineas) : '—'})`, `OTIF: ${p(r.otif)} (${avg} ${p(b?.otif)})`,
-        `${tx('Carretillas', 'Forklifts')}: ${num(r.equipos, 1)}`, `${tx('Palés en calles', 'Pallets in lanes')}: ${num(r.calle)}`);
-    } else {
-      lines.push(`${tx('Media', 'Average')}: ${b ? num(b.lineas) : '—'} ${tx('líneas', 'lines')} · OTIF ${p(b?.otif)}`);
-    }
+    if (r) lines.push(...this.cfg.tip(r, b));
+    else lines.push(this.cfg.tipBase(b));
     this.tip.innerHTML = lines.join('<br>');
     this.tip.hidden = false;
     const x = this.pad.l + (hora - H0 + 0.5) * this.bw;

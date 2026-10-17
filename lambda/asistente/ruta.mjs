@@ -32,7 +32,7 @@ const FUERTE = re([
   // Quién la ha hecho / who built it.
   String.raw`\bquien\b.{0,25}\b${VERBO_ES}\b.{0,15}\b${APP}\b`, String.raw`\bquien (te|lo|la|os) ${VERBO_ES}\b`,
   String.raw`\b(quien|who)\b.{0,25}\b${VERBO_ES}\s*\??$`, String.raw`\bwho\b.{0,20}\b${VERBO_EN}\b.{0,10}\b(you|it|this)\s*\??$`,
-  String.raw`\bquien esta detras\b`, String.raw`\bde quien es (esto|estiba|${APP})\b`, String.raw`\b(el|la) que ${VERBO_ES} ${APP}\b`,
+  String.raw`\bquien esta detras( de (todo )?(${APP}|ti))?\s*\??$`, String.raw`\bde quien es (esto|estiba|${APP})\b`, String.raw`\b(el|la) que ${VERBO_ES} ${APP}\b`,
   String.raw`\bwho\b.{0,20}\b${VERBO_EN}\b.{0,15}\b(${APP}|you)\b`, String.raw`\bwho('s| is) (the )?(author|creator|developer|programmer)\b`,
   String.raw`\b(creador|creadora|creator|autor|autora|author)\b`, String.raw`\b(the|el|la) (developer|desarrollador|desarrolladora|programador|programadora)\s*\??$`,
   String.raw`\b(tell me about|hablame (de|del)|cuentame (de|del|sobre)) (the |el |la )?(developer|desarrollador|programador|creador|creator|author|autor)\b`,
@@ -52,28 +52,41 @@ const FUERTE = re([
 const DEBIL = re([
   String.raw`\b(he|his|him|el es|ella|has he|was he|had he|is he|would he|does he|did he|can he|he's|the candidate|el candidato|in real life)\b`,
   String.raw`\b(su|sus) (experiencia|perfil|trayectoria|formacion|estudios|carrera|nivel|ingles|idiomas|puesto|trabajo|empleo|disponibilidad|situacion)\b`,
-  String.raw`\b(ha|habia|ha sido|fue) (trabajado|gestionado|liderado|usado|dirigido|coordinado|sido (jefe|responsable|encargado|analista))\b`,
+  String.raw`\b(ha|habia|ha sido|fue) (trabajado|gestionado|liderado|usado|dirigido|coordinado|llevado|sido (jefe|responsable|encargado|analista))\b`,
+  // Experiencia preguntada al revés («¿qué experiencia tiene en última milla?»), por dónde pasó y el paquete que pide.
+  String.raw`\b(que|cuanta|mucha|alguna) experiencia (tiene|tenia|ha tenido)\b`, String.raw`\bexperiencia (previa )?(en|con)\b`,
+  String.raw`\btrabajo (como|en una|en un)\b`, String.raw`\bestuvo (en|como)\b`, String.raw`\bera (un|una|el|la) (conductor|jefe|responsable|analista|tecnico|encargado|operario)\b`,
+  String.raw`\bpaquete\b.{0,12}\b(pide|busca|quiere|espera)\b`, String.raw`\b(modulos? de (sap|aws)|conoce|domina|maneja)\b`, String.raw`\b(lo que (buscamos|necesitamos)|what we (are looking for|need))\b`,
   String.raw`\b(se dedica|esta trabajando|trabaja ahora|busca trabajo|esta disponible|disponible para|dispuesto|willing|relocat|mudar\w*|trabajaria|sabe (sql|python|excel|sap|aws|ingles|hacer|usar|programar)|habla (ingles|arabe))\b`,
   String.raw`\b(trayectoria profesional|career|carrera profesional|work experience|years of experience|anos de experiencia|experiencia (profesional|laboral|previa|en (logistica|almacenes?|supply|cloud|aws))|tiene experiencia|has experience|experience (in|with))\b`,
-  String.raw`\bque estudio\s*\??$`, String.raw`\b(que hizo|what did he do|what has he done)\b`, String.raw`\b(que|sus|his) (certificad\w*|certifications?|titulos?)\b`,
+  String.raw`\bque estudio\s*\??$`, String.raw`(?<!en )\b(curso|cursado)\s*\??$`, String.raw`\b(que hizo|what did he do|what has he done)\b`, String.raw`\b(que|sus|his) (certificad\w*|certifications?|titulos?)\b`,
   String.raw`\b(estudios|donde estudio|formacion academica|titulacion|education|(a|his|the|un) degree|degree in|bachelor|grado en|(a|his|un|el|su) master'?s?|master'?s degree|universidad|university|certificacion(es)?|certificad[oa]s? (de aws|de sap|oficial)|certifications?|certified)\b`,
   String.raw`\b(junior|senior|entrevista|interview|freelance|salario|salary|tarifa|(his|su|day|hourly|daily) rate|remoto|remote|una vacante|a vacancy|(buen|gran|good|strong|great) (candidato|candidate|fit)|encaj\w*|(un|una) (puesto|vacante|oferta) de|puesto de (analista|desarrollador|developer|ingeniero|engineer|jefe|responsable|trabajo)|jefe de almacen|warehouse manager|(a|this|the) (role|position|job) (as|of|for)|tiene el perfil|el perfil para|fit for)\b`,
   String.raw`\b(que idiomas|what languages|nivel de ingles|english level|habla ingles|speak english|his english)\b`,
   String.raw`\b(developer|desarrollador|desarrolladora|programador|programadora)\b`,
 ]);
 
-// Vocabulario del turno (sin palabras de conversación corriente como «hoy», «ahora», «estado», «resumen»).
-const TURNO = /\b([a-z]{3}-\d{4}|otif|fill|dock|muelle|recepcion|calle|carretill|forklift|ruta|route|camion|truck|stock|rotura|slotting|abc|picking|picker|ola|wave|ocupacion|occupancy|hueco|turno|shift|kpi|pedido|order|pale|palet|pallet|zaragoza|madrid|barcelona|almacen|warehouse|pasillo|aisle|sku|referencia|operari|retraso|delay|taller|workshop|inventario|inventory|expedicion|dispatch|salida|cuello de botella|bottleneck|urgente|urgent|prioridad|priorit|que hago|que hacemos|what should i do|what do i do|transportista|carrier|proveedor|supplier|demanda|demand|previsi|forecast|riesgo|risk|compar|productiv|como va|como vamos|how('s| is) (it|the day|everything) going|how are we doing)/;
+// Vocabulario del turno de las tres operativas: almacén; automoción (tiers, línea, módulos, chips); última milla
+// (cross-dock, sorter, delegaciones, reparto, clientes). Sin palabras de conversación corriente («hoy», «estado»…).
+const TURNO = /\b([a-z]{3}-\d{4}|otif|fill|dock|muelle|recepcion|calle|carretill|forklift|ruta|route|camion|truck|stock|rotura|slotting|abc|picking|picker|ola|wave|ocupacion|occupancy|hueco|turno|shift|kpi|pedido|order|pale|palet|pallet|zaragoza|madrid|barcelona|almacen|warehouse|pasillo|aisle|sku|referencia|operari|retraso|delay|taller|workshop|inventario|inventory|expedicion|dispatch|salida|cuello de botella|bottleneck|urgente|urgent|prioridad|priorit|que hago|que hacemos|what should i do|what do i do|transportista|carrier|proveedor|supplier|demanda|demand|previsi|forecast|riesgo|risk|compar|productiv|como va|como vamos|how('s| is) (it|the day|everything) going|how are we doing|[a-z]{2}-\d{6}|[a-z]{3}-\d{2}\b|tiers?\b|oem\b|(la|the) (linea|line)\b|linea de montaje|assembly line|montaje|(la|the) produccion|plan de produccion|cumplimiento del plan|how is production|production (plan|line|today)|cuantos coches|coches (montados|fabricados|de hoy|hoy)|how many cars|cars (built|today)|chips?\b|semiconductor|centralitas?\b|ecus?\b|jit\b|jis\b|secuencia|sequence|takt|lanzaderas?\b|shuttles?\b|fpy\b|retrabajo|rework|plan b\b|cross.?dock|sorter|clasificad[oa]s\b|induccion|delegacion|depots?\b|reparto|repartidores?\b|conductores|drivers\b|furgonetas?\b|vans\b|bultos?\b|parcels?\b|paquetes\b|entregas?\b|deliveries\b|ultima milla|last.?mile|zara|inditex|decathlon|gousto|e-?commerce|modulos?\b|modules?\b|(el|un|que|which|the|a) (conductor|driver)\b|(la|una|que|which|the|a) (furgoneta|van)\b|entregad[oa]s\b|how many delivered|clasificacion|vehiculos\b|coches\b|campa\b|paquete\b(?! (salarial|retributivo)))/;
 const SALUDO = /^\s*(hola|buenas|buenos dias|buenas tardes|hello|hi|hey|good (morning|afternoon|evening))\b[\s!.,¡]*$/;
 
 const ES_RESPUESTA_ALI = /linkedin\.com\/in\/ali-aauicha/i;
 const ultimaRespuesta = (historial) => [...(Array.isArray(historial) ? historial : [])].reverse().find((h) => h && h.rol !== 'usuario');
 export const ultimaFueSobreAli = (historial) => ES_RESPUESTA_ALI.test(String(ultimaRespuesta(historial)?.texto || ''));
 
-// Destinos de ruta y almacén del contexto que manda la web (o los del simulador en la propia web).
+// Nombres de la operativa que manda la web: destinos de ruta (almacén), plantas (automoción) o
+// delegaciones (última milla). La web pasa {almacen, rutas}; la Lambda recibe el contexto completo.
+const lista = (v) => (Array.isArray(v) ? v : []);
+const nombresDe = (c) => [
+  ...lista(c?.rutas).map((r) => r?.destino),
+  ...lista(c?.proveedores).map((p) => p?.planta),
+  ...lista(c?.delegaciones).map((d) => d?.delegacion),
+].map((n) => String(n || '')).filter(Boolean).slice(0, 40);
+const lugarDe = (c) => String(c?.almacen || c?.planta || c?.centro || '');
+
 function nombraElTurno(q, contexto) {
-  const nombres = [String(contexto?.almacen || '').split(/[ (]/)[0],
-    ...(Array.isArray(contexto?.rutas) ? contexto.rutas : []).map((r) => String(r?.destino || ''))]
+  const nombres = [lugarDe(contexto).split(/[ (]/)[0], ...nombresDe(contexto)]
     .map(norm).filter((n) => n.length > 2);
   return nombres.some((n) => new RegExp(`\\b${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(q));
 }
@@ -92,22 +105,31 @@ export function clasificar(pregunta, historial = [], contexto = {}) {
 // Para la web (etiqueta y respuesta local sin Lambda), sin modelo: lo dudoso sigue el hilo de la respuesta
 // anterior solo si no trae vocabulario del turno, o si trae además señal de perfil («¿Ha gestionado
 // almacenes?» tras hablar de Ali sí; «¿Y el OTIF?» no).
+// Seguimiento elíptico («¿y en última milla?», «and in last mile?»): tras hablar de Ali, sigue con Ali salvo que
+// nombre algo de la operativa en pantalla («¿y en Toledo?») o siga con una pregunta del turno («¿y en expedición
+// cómo vamos?», «¿y con OTIF?»).
+const ELIPSIS = /^[\s¿]*(y|and) (en|in|con|with)\b/;
+const RESTO_TURNO = /,|\b(como|que|cuant\w*|how|what|hay|queda\w*|pasa|otif|kpi|fill|muelles?|docks?|carretill\w*|forklifts?|pasillos?|aisles?|retrasos?|delays?|expedicion|dispatch|recepcion|receiving|sorter|lanzaderas?|shuttles?|fpy|takt)\b/;
+
 export function esPreguntaSobreAli(pregunta, historial = [], contexto = {}) {
   const c = clasificar(pregunta, historial, contexto);
   if (c !== 'dudosa') return c === 'ali';
   if (!ultimaFueSobreAli(historial)) return false;
   const q = norm(pregunta);
+  // Solo la elipsis «desnuda» («¿y en última milla?»); con artículo o cifra es del turno («¿y en el muelle 3?»).
+  if (ELIPSIS.test(q) && !nombraElTurno(q, contexto) && !/\d/.test(q) && !/^[\s¿]*(y|and) (en|in|con|with) (el|la|los|las|the|este|esta|this)\b/.test(q)
+    && !RESTO_TURNO.test(q.replace(ELIPSIS, ''))) return true;
   return DEBIL.test(q) || !(TURNO.test(q) || nombraElTurno(q, contexto));
 }
 
 // Prompt de la llamada corta que resuelve las dudosas en la Lambda (ali.mjs temaDe).
 export function promptClasificador(pregunta, historial = [], contexto = {}) {
   const previa = String(ultimaRespuesta(historial)?.texto || '').slice(0, 400);
-  const destinos = (Array.isArray(contexto?.rutas) ? contexto.rutas : []).map((r) => String(r?.destino || '')).filter(Boolean).slice(0, 12);
-  const almacen = String(contexto?.almacen || '').slice(0, 60);
-  return `Chat de Estiba, un gemelo digital de almacén (demo de portafolio de Ali Aauicha Azghouli). Clasifica la ÚLTIMA pregunta del visitante.
+  const destinos = nombresDe(contexto).slice(0, 12);
+  const almacen = lugarDe(contexto).slice(0, 60);
+  return `Chat de Estiba, un gemelo digital de tres operativas logísticas: almacén, cadena de automoción y última milla (demo de portafolio de Ali Aauicha Azghouli). Clasifica la ÚLTIMA pregunta del visitante.
 - "ali": pregunta por la persona que creó la app (quién es, trayectoria, experiencia en logística o almacenes, estudios, nivel, encaje en un puesto, contacto, dónde vive, idiomas, sus otros proyectos) o por qué es Estiba como proyecto (quién la hizo, si es real o se usa en almacenes reales, cómo está hecha, para qué sirve). También los seguimientos de una conversación sobre Ali, aunque usen palabras de almacén ("¿ha gestionado almacenes?").
-- "turno": pregunta por la operativa del almacén simulado (indicadores, rutas, muelles, carretillas, stock, operarios o equipos del almacén, qué hacer ahora), o un saludo.
-${almacen || destinos.length ? `Almacén del turno: ${almacen || '—'}; destinos de sus rutas: ${destinos.join(', ') || '—'} (si la pregunta los nombra, es del turno).\n` : ''}${previa ? `Respuesta anterior del asistente: «${previa}»\n` : ''}Pregunta: «${String(pregunta).slice(0, 300)}»
+- "turno": pregunta por la operativa simulada (almacén: indicadores, rutas, muelles, carretillas, stock; automoción: proveedores, línea, módulos, coches; última milla: cross-dock, sorter, delegaciones, conductores, entregas, clientes; qué hacer ahora), o un saludo.
+${almacen || destinos.length ? `Operativa en pantalla: ${almacen || '—'}; nombres que aparecen en ella: ${destinos.join(', ') || '—'} (si la pregunta los nombra, es del turno).\n` : ''}${previa ? `Respuesta anterior del asistente: «${previa}»\n` : ''}Pregunta: «${String(pregunta).slice(0, 300)}»
 Responde solo con una palabra: ali o turno.`;
 }
