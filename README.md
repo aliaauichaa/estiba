@@ -156,8 +156,8 @@ node scripts/probar-milla.mjs 5   # última milla (añade «refuerzo» para el p
 
 Esc quita la selección.
 
-`test/ali.test.mjs` necesita `lambda/asistente/ficha-ali.mjs`, la ficha del autor, que no está en el repositorio
-(ver el apartado siguiente): en un clon limpio ese fichero de pruebas falla y el resto pasa. La web no la necesita.
+Cinco pruebas de `test/ali.test.mjs` usan `lambda/asistente/ficha-ali.mjs`, la ficha del autor, que no está en el
+repositorio (ver el apartado siguiente): en un clon limpio se saltan y el resto pasa. La web no la necesita.
 
 ## Asistente con Bedrock (opcional)
 
@@ -245,8 +245,8 @@ diagnoses in `src/analysis/`. Deployed on S3 + CloudFront (OAC) for the site and
 assistant (`deploy.ps1`).
 
 Run it locally with `npm install` and `npm run dev` (http://localhost:5190); `npm test` runs the tests and `npm run
-build` writes `dist/`. `test/ali.test.mjs` needs the author's profile (`lambda/asistente/ficha-ali.mjs`), which is
-not in the repository, so in a fresh clone that test file fails and the rest pass. The assistant uses Claude only when
+build` writes `dist/`. Five tests in `test/ali.test.mjs` need the author's profile (`lambda/asistente/ficha-ali.mjs`),
+which is not in the repository; in a fresh clone they are skipped and the rest pass. The assistant uses Claude only when
 the site is built with `VITE_ESTIBA_API` pointing at the Lambda; otherwise it answers from the local engine. See the
 Spanish section for the Lambda setup.
 

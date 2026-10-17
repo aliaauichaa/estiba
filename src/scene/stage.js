@@ -9,6 +9,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
+import { separarEtiquetas } from './solape.js';
 
 const DIR = new THREE.Vector3(0.5, 0.95, -1.0).normalize();
 const DIST = 400;
@@ -317,6 +318,65 @@ export class Stage {
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.labelRenderer.render(this.scene, this.camera);
+    this._sinSolape();
+  }
+
+  // Las etiquetas que el contenido pide no pisar (content.sinSolape) se miden ya colocadas y las que tapan a otra
+  // se mueven al sitio libre más cercano; si suben, con una línea hasta su sitio (solape.js). En userData:
+  // prioSolape (por defecto 0), solape 'ocultar' para los rótulos que se esconden en vez de moverse y cajaSolape
+  // si lo que se ve es un hijo (los rótulos alineados a la izquierda). El desplazamiento va en la propiedad CSS
+  // «translate», que se suma al «transform» con el que el CSS2DRenderer las coloca en cada fotograma.
+  _sinSolape() {
+    const ls = this.content?.sinSolape;
+    if (!ls?.length) return;
+    // Mientras la cámara se mueve se recoloca cuatro veces por segundo: con la transición de 0,25 s se ve un
+    // deslizamiento seguido. Recolocando en cada fotograma, en móvil alguna iba y volvía entre dos sitios.
+    const ahora = performance.now();
+    const firma = `${this.camera.matrixWorld.elements.join()}|${this.camera.zoom}|${this.camera.right}`;
+    if (firma !== this._firmaCam) { this._firmaCam = firma; this._camMovida = ahora; }
+    if (ahora - this._camMovida < 200 && ahora - (this._solapeEn || 0) < 250) return;
+    this._solapeEn = ahora;
+    const vis = [];
+    for (const o of ls) {
+      const el = o.element;
+      const antes = el._dy || 0;
+      if (el.style.display === 'none' || !el.isConnected) {
+        if (antes || el._oculta) this._colocar(el, 0);
+        continue;
+      }
+      const r = (o.userData.cajaSolape || el).getBoundingClientRect();
+      if (!r.width) continue;
+      // El cambio de sitio va con transición (style.css): lo que se mide lleva el desplazamiento a medio camino,
+      // así que se descuenta el que se ve ahora, no el de destino.
+      const ya = parseFloat(getComputedStyle(el).translate.split(' ')[1]) || 0;
+      vis.push({
+        el, l: r.left, r: r.right, t: r.top - ya, b: r.bottom - ya, antes,
+        prio: o.userData.prioSolape ?? 0, ocultar: o.userData.solape === 'ocultar', oculta: !!el._oculta,
+      });
+    }
+    // Paneles flotantes de la escena (vistas, cámaras, avisos, leyenda, seguimiento) y los bordes del visor:
+    // ninguna etiqueta se mueve a debajo de ellos.
+    const caja = (r) => ({ l: r.left, r: r.right, t: r.top, b: r.bottom });
+    const tapas = [...this.el.querySelectorAll('.vp-left > *, .vp-right > *, .legend, .tracker')]
+      .map((e) => e.getBoundingClientRect()).filter((r) => r.width && r.height).map(caja);
+    const vr = this.el.getBoundingClientRect();
+    tapas.push({ l: -Infinity, r: Infinity, t: -Infinity, b: vr.top }, { l: -Infinity, r: Infinity, t: vr.bottom, b: Infinity });
+    const res = separarEtiquetas(vis, { tapas });
+    vis.forEach((v, i) => this._colocar(v.el, res[i] == null ? null : Math.round(res[i])));
+  }
+
+  // d: píxeles en vertical (negativo: hacia arriba) o null para esconderla. Solo toca el DOM si cambia algo.
+  // La línea guía va solo cuando sube: bajando, la etiqueta queda pegada a su edificio.
+  _colocar(el, d) {
+    const oculta = d == null;
+    const dy = oculta ? 0 : d;
+    if (oculta !== !!el._oculta) { el.style.visibility = oculta ? 'hidden' : ''; el._oculta = oculta; }
+    if (dy !== (el._dy || 0)) {
+      el.style.translate = dy ? `0 ${dy}px` : '';
+      el.style.setProperty('--sube', `${Math.max(0, -dy)}px`);
+      el.classList.toggle('movida', dy < 0);
+      el._dy = dy;
+    }
   }
 
   _bindPointer() {

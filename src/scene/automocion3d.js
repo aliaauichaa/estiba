@@ -93,10 +93,13 @@ export class AutoScene {
     this.cars = new Map();
     this.portas = new Map();
     this.textos = [];
+    this.rotulosTier = [];
     this._cerca = undefined;
     this._suelo();
     this._carreteras();
     for (const p of sim.plantas) this._planta(p);
+    // Las etiquetas de las plantas de un mismo tier se tapaban con nombres largos: la escena las separa.
+    this.sinSolape = [...[...this.plantas.values()].map((o) => o.lab), ...this.rotulosTier];
     this._fabrica();
     this.update(0);
   }
@@ -152,7 +155,12 @@ export class AutoScene {
       band.position.set((x0 + x1) / 2, -0.03, z);
       band.receiveShadow = true;
       g.add(band);
-      this._texto(T[`t${tier}`], 'zone tier izq', x0 + 3, 0.2, z - TIER_SIZE[tier][1] / 2 - 5.5).element.style.color = `#${new THREE.Color(TIER_COL[tier]).getHexString()}`;
+      const rot = this._texto(T[`t${tier}`], 'zone tier izq', x0 + 3, 0.2, z - TIER_SIZE[tier][1] / 2 - 5.5);
+      rot.element.style.color = `#${new THREE.Color(TIER_COL[tier]).getHexString()}`;
+      // El rótulo del tier no se mueve ni se esconde (en móvil la leyenda no se ve y es lo único que nombra la
+      // franja): son las etiquetas de planta las que se apartan para no pisarlo.
+      Object.assign(rot.userData, { prioSolape: 1, cajaSolape: rot.element.firstChild });
+      this.rotulosTier.push(rot);
     }
     const oem = new THREE.Mesh(new THREE.BoxGeometry(124, 0.1, 40), std(0xf5a524, { roughness: 1, transparent: true, opacity: 0.07 }));
     oem.position.set(18, -0.03, -1);

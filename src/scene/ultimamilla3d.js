@@ -98,6 +98,9 @@ export class MillaScene {
     this._suelo();
     this._crossdock();
     for (const d of sim.delegaciones) this._delegacion(d);
+    // Las etiquetas de las delegaciones no se pisan entre sí; la nota del mapa es la que se aparta y el rótulo
+    // del patio se esconde si estorba.
+    this.sinSolape = [...[...this.hubs.values()].map((h) => h.lab), this._nota, this._patio];
     this._furgonetas();
     this.update(0);
     this.refresh();
@@ -158,7 +161,8 @@ export class MillaScene {
       ring.position.y = 0.01;
       this.root.add(ring);
     }
-    this._texto(() => tx('N ↑ · esquema, no a escala', 'N ↑ · schematic, not to scale'), 'zone small', b.max.x - 34, 0.2, b.max.z - 8);
+    this._nota = this._texto(() => tx('N ↑ · esquema, no a escala', 'N ↑ · schematic, not to scale'), 'zone small', b.max.x - 34, 0.2, b.max.z - 8);
+    this._nota.userData.prioSolape = -1;
   }
 
   _crossdock() {
@@ -245,7 +249,8 @@ export class MillaScene {
     patio.position.set(0, 0, D / 2 + 15);
     patio.receiveShadow = true;
     g.add(patio);
-    this._texto(() => tx('PATIO DE ENTRADA · CLIENTES', 'INBOUND YARD · CUSTOMERS'), 'zone small', 0, 0.2, D / 2 + 27);
+    this._patio = this._texto(() => tx('PATIO DE ENTRADA · CLIENTES', 'INBOUND YARD · CUSTOMERS'), 'zone small', 0, 0.2, D / 2 + 27);
+    Object.assign(this._patio.userData, { prioSolape: -2, solape: 'ocultar' });
   }
 
   _delegacion(d) {
